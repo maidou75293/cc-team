@@ -738,7 +738,11 @@ def loop(shadow, with_board=False, once=False, max_ticks=None, rings=None, wheel
                 wheel.watchdog()
                 write_hb(home, shadow, rings, getattr(board, "pid", None))
                 if with_board:
-                    board, _ = supervise_board(board, board_spawn, lambda m: log_line(home, m))
+                    # 22:2x 看板重启必崩实锤：supervise_board 按零参调用 spawn_fn（自测形=
+                    # lambda: FakeProc(...)），此处曾直传 board_spawn(home) 的函数体=重启圈
+                    # 每圈 TypeError（board 幸存期间走不到，一死即哑）——lambda 绑 home 补参。
+                    board, _ = supervise_board(board, lambda: board_spawn(home),
+                                               lambda m: log_line(home, m))
             except Exception:
                 tb = traceback.format_exc().strip()
                 sig = tb.splitlines()[-1][:160] if tb else "?"
@@ -983,6 +987,15 @@ def _selftest(fault=None):
                                 lambda m: logs.append(m), now=5.0)
     t4b = nb2 is None and act2 == "giveup" and any("BOARD-GIVEUP" in m for m in logs)
     results["T4 看板子死重起/连快死>3弃权（撤阈值必红）"] = t4a and t4b
+
+    # T4c 生产接线签名（22:2x kill 实锤）：supervise_board 按**零参**调用 spawn_fn；生产 loop
+    # 曾直传需 home 的 board_spawn=看板一死每圈 TypeError 永不复活（FakeProc-lambda 自测面
+    # 挡不住真接线错误）——用源码文本闸钉死接线形，改回裸传必红。
+    src = open(os.path.abspath(__file__), encoding="utf-8").read()
+    _w = src[src.find("if with_board:"):]
+    _w = _w[:_w.find("except Exception")]
+    t4c = ("lambda: board_spawn(home)" in _w and "supervise_board(board, board_spawn," not in _w)
+    results["T4c 生产接线 lambda 绑 home（裸传 board_spawn 必红）"] = t4c
 
     # T5 子环境按 host 推导：两册同文件口径（WSL /mnt/c 与 Windows C:\ 指同一块盘同一文件）。
     saved = {k: os.environ.pop(k) for k in
