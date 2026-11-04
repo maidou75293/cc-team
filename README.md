@@ -1,5 +1,10 @@
 # cc-team —— 你提需求，它出货：多智能体开发生产线
 
+[![ci](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml/badge.svg)](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-MIT-green)
+![python](https://img.shields.io/badge/python-3.9%2B-blue)
+![deps](https://img.shields.io/badge/runtime%20dependencies-none-yellowgreen)
+
 **纯标准库、零外部依赖。** 把需求登记成一张带验收判据的「卡」，引擎就自动派单，
 并行开动多路终端 agent 会话（Claude Code、Codex CLI 或同形态工具）写代码，
 交卷后机器自动复跑你的判据，绿了自动合入主干。所有状态都是人类可读的文件——
@@ -54,6 +59,51 @@ python cards_dag.py create ORDERS-RATE-LIMIT \
 提交快进并进主干。你在看板上看着这张卡从「待领」走到「已验收」，然后你的仓库
 `git log` 里多了一个**带机器验收痕**的 commit——它就是你自己部署流水线的放行信号
 （部署动作留在你的管线；引擎不碰你的生产环境）。
+
+## 三分钟现场（本机实跑原始输出，只隐去临时路径）
+
+一个空仓库、一张坏实现的 `add()`、测试文件还不存在——从这里开跑，双泳道并行到两张卡
+全部 VERIFIED，以下就是当时的运行输出（未摆拍；`…` 为哈希截短）：
+
+```text
+== 底仓就绪 b307abf（calc.add 是坏的，测试文件还不存在）
+== 立卡（判据红-first：缺失产物在 files 域内=R2 豁免在册）
+DEMO-ADD OPEN
+DEMO-SUB OPEN
+== 双泳道并行开工（各绑一棵 worktree，互不踩）
+DEMO-ADD CLAIMED lane-a epoch=1
+DEMO-SUB CLAIMED lane-b epoch=1
+== 交卷（锚校验=自报哈希须等于泳道实树尖，错一个字节都不收）
+18:34:59|DEMO-ADD|CLAIMED->DONE|lane-a|commit=cfcb54a… tip=cfcb54a… same
+18:34:59|DEMO-SUB|CLAIMED->DONE|lane-b|commit=09214ea… tip=09214ea… same
+== 合入主干（常驻形态由 fuse 看护快进；未并主干前 verdict 会被主干闸直接拒）
+main 现在: 543f256 Merge branch 'wf-b' | cfcb54a DEMO-ADD impl+test | 09214ea DEMO-SUB impl+test
+== 机器复跑卡面判据（不是人点头）
+18:35:00|DEMO-ADD|DONE->VERIFIED|verifier|PASS
+18:35:00|DEMO-SUB|DONE->VERIFIED|verifier|PASS
+DEMO-ADD VERIFIED lane-a verify_run rc=0
+DEMO-SUB VERIFIED lane-b verify_run rc=0
+```
+
+常驻运行时，上面每一步由派单器、会话退出钩子、合流看护自动完成——你只做「立卡」那一步。
+（想手工复现全链：见文末附录；`cc init` 生成的模板即为起会话/结账两件套。）
+
+## 和现成方案的差异（2026-11 对公开项目实测调研）
+
+| 方案 | 状态存哪 | 怎么并行 | 怎么验收 | 现状/License |
+|---|---|---|---|---|
+| **cc-team** | **明文文件账本+追加式事件日志**，断电不丢、可入 git 评审 | git worktree 泳道 | **机器复跑卡面判据，绿了才 VERIFIED**；账本级僵尸回收与写入围栏（任期制） | 本项目 / MIT |
+| Claude Squad | 本地会话配置，无任务台账 | tmux + worktree | 人审 diff 再 checkout | 活跃 / AGPL-3.0 |
+| Claude Code Agent Teams | 官方文档自认：team 配置**会话结束即删**，/resume 不恢复成员，孤儿会话列于人工排障清单 | 共享任务列表认领 | hooks 槽位（闸门要自己写），实验特性默认关闭 | 专有软件 |
+| Vibe Kanban | 内部 SQLite（不透明） | 看板任务→worktree | 人审 diff/PR | **公司 2026-04 关停**转社区 / Apache-2.0 |
+| container-use | 容器日志+分支，无状态机 | Docker 容器 | 人审分支 | 停滞（release 止于 2025-08）/ Apache-2.0 |
+| Conductor / Copilot agent | 应用/平台侧托管 | worktree / 云沙箱 | 人审后合并 | 闭源商业 / 专有 SaaS |
+| LangGraph / CrewAI / AutoGen | 检查点或状态 JSON（依赖 SQLite/Postgres；社区公开指出 checkpoint≠可恢复执行） | 图节点/流程，非面向代码仓 | 无代码验收闸门概念；AutoGen 已入维护模式 | 框架类 / MIT 等 |
+
+两条最硬的差异，调研结论原样引用其依据：
+- **「验收=机器复跑判据」是全表唯一无对等项**——其余方案的收口全是"人看一眼 diff"。
+- **账本必须完全归用户**：Vibe Kanban 公司关停连云端看板一起移除的反例，正是"纯文件、
+  无厂商账号、本地自主"这条路线要解决的问题。
 
 ## 凭什么信它
 

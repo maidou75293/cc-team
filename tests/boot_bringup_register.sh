@@ -70,6 +70,6 @@ ps="${ps//@DESC@/$DESC}"
 b64="$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
 out="$("$PS_BIN" -NoProfile -ExecutionPolicy Bypass -EncodedCommand "$b64" 2>&1)" && rc=0 || rc=$?
 printf '%s\n' "$out" | tr -d '\r'
-if [ $rc -ne 0 ]; then echo "REGISTER=FAIL rc=$rc（任务 $TASK 未注册成）"; exit 1; fi
+if [ $rc -ne 0 ]; then echo "REGISTER=FAIL rc=${rc}（任务 $TASK 未注册成）"; exit 1; fi
 grep -q "registered=$TASK" <<<"$out" || { echo "REGISTER=FAIL 输出无 registered= 标记"; exit 1; }
-echo "REGISTER=PASS task=$TASK（Interactive 登录触发；首启验证=schtasks.exe /run /tn $TASK 后看 $LOG）"
+echo "REGISTER=PASS task=${TASK}（Interactive 登录触发；首启验证=schtasks.exe /run /tn $TASK 后看 ${LOG}）"

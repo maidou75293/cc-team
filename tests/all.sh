@@ -31,7 +31,12 @@ res(){ cut -d' ' -f"$1" < "$D/$2.res"; }
 for spec in "selftest ALL_PASS" "adversary ADR_ALL_PASS" "guard GUARD_ALL_PASS" "pidalive PID_ALIVE_PASS" "ccenv CC_ENV_DETECT_PASS"; do
   set -- $spec; name=$1; marker=$2   # 词切分取法：${t% *} 族要两个空格才匹配，单空格串会假红(2026-10-31 实锤)
   if [ "$(res 1 $name)" != 0 ] || ! grep -q "$marker" "$D/$name.log"; then
-    bad=$((bad+1)); echo "FAIL: $name (rc=$(res 1 $name)) —— $D/$name.log 尾部:"; tail -20 "$D/$name.log"
+    bad=$((bad+1)); echo "FAIL: $name (rc=$(res 1 $name)) —— $D/$name.log 全部红条+尾部:"
+    # 只 tail -20 会把 FAIL 行挤出可见窗（macOS 首跑 adversary fails=1 查不到因=本改直接诱因）；
+    # 红条全打 + 崩溃行（unbound/not found/syntax）全打，再留 20 行上下文尾巴。
+    grep -aE '^FAIL|^=== .*(fails=[1-9]|FAIL)' "$D/$name.log" || true
+    grep -aE 'unbound variable|command not found|syntax error|No such file|Segmentation' "$D/$name.log" | head -8 || true
+    tail -20 "$D/$name.log"
   fi
 done
 TW=$(( $(date +%s) - T0 ))

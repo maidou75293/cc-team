@@ -37,7 +37,7 @@ U="$(whoami)"
 TASK="${BOOT_TASK_NAME:-cc-boot-bringup}"
 DASH_URL="${DASH_URL:-http://127.0.0.1:8790/}"
 # REQ-OSS-ENGINE-1：默认路径零宿主字面量——仓根/码根由本脚本自位置现算；settings 取挂载视图
-# 首个含 .claude 的用户目录（本机取到的串与旧默认逐字相同，扫不到退回 $HOME）。
+# 首个含 .claude 的用户目录（本机取到的串与旧默认逐字相同，扫不到退回 ${HOME}）。
 BC_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BC_CODE="$(dirname "$BC_REPO")"
 BC_SETTINGS_DEFAULT(){ for u in /mnt/[A-Za-z]*/Users/*; do [ -d "$u/.claude" ] && { echo "$u/.claude/settings.json"; return; }; done; echo "$HOME/.claude/settings.json"; }
@@ -55,7 +55,7 @@ for svc in cc-dispatch cc-status-dashboard; do
   en="$(systemctl --user is-enabled "$svc" 2>&1)"; ac="$(systemctl --user is-active "$svc" 2>&1)"
   n="TC3"; [ "$svc" = cc-status-dashboard ] && n="TC4"
   if [ "$en" = enabled ] && [ "$ac" = active ]; then ok "$n $svc enabled+active"
-  else bad "$n $svc enabled=$en active=$ac（重启后自起看 enabled，此刻在跑看 active）"; fi
+  else bad "$n $svc enabled=$en active=${ac}（重启后自起看 enabled，此刻在跑看 active）"; fi
 done
 
 # TC5 cron 在跑
@@ -115,7 +115,7 @@ else
   ctr_req=0     # Windows 侧不可达（纯 Linux 宿主跑本脚本时）：按过渡豁免，上岗制压请用 CTRLD_REQUIRED=1
 fi
 if [ "$ctr_req" = 1 ]; then
-  if [ ! -e "$CTR_HB" ]; then bad "TC11 ctrld 心跳不存在 $CTR_HB（任务在册却没跑？install 或查计划任务）"
+  if [ ! -e "$CTR_HB" ]; then bad "TC11 ctrld 心跳不存在 ${CTR_HB}（任务在册却没跑？install 或查计划任务）"
   elif find "$CTR_HB" -mmin -3 2>/dev/null | grep -q .; then
     ok "TC11 ctrld 活性 心跳龄<3min [$(tr -d '
 ' < "$CTR_HB" | cut -c1-60)]"

@@ -11,7 +11,7 @@ N="${CC_TEAM_HOME:-$_self}"
 LOG="$N/state/events.log"
 THRESHOLD="${1:-1048576}"
 
-[ -f "$LOG" ] || { echo "archive-events: 无 $LOG，无事可做"; exit 0; }
+[ -f "$LOG" ] || { echo "archive-events: 无 ${LOG}，无事可做"; exit 0; }
 SZ=$(stat -c %s "$LOG")
 if [ "$SZ" -le "$THRESHOLD" ]; then
   echo "archive-events: events.log ${SZ}B ≤ ${THRESHOLD}B，无需轮转"

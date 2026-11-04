@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # 手动按钮（Actions 页 Run workflow）+ 每日定时：macOS 实验通道与观察用的触发口。
+  # 注=GitHub 云侧排程，不是本机 OS 定时器（零 OS 铁律管的是常驻引擎，不受此影响）。
+  workflow_dispatch:
+  schedule:
+    - cron: "30 1 * * *"   # 每日 01:30 UTC（北京 09:30）一圈全量含 macOS
 
 jobs:
   suites:
@@ -41,6 +46,10 @@ jobs:
   # 红不挡 ubuntu/windows 正判、不占首绿定义）；连续多圈稳定后再转正进矩阵。
   suites-macos:
     name: suites (macos-latest · 实验)
+    # 额度纪律（业主 11-04 18:2x「有这个免费额度挺好」后定口径）：macOS 1 分钟=10 倍扣
+    # 2000 分/月池 ⇒ 只在「每日定时圈 + 手动按钮」跑，不随 push/PR 烧额度。
+    # 连续多圈稳定后再转正进主矩阵（届时撤本 if 与 continue-on-error）。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     continue-on-error: true
     env:
@@ -50,6 +59,9 @@ jobs:
       GIT_COMMITTER_EMAIL: ci@ci.local
     steps:
       - uses: actions/checkout@v4
+      - name: 宿主留证（macOS 版本/架构/bash——bash3.2 类差异归因要看这行）
+        shell: bash
+        run: sw_vers; uname -m; echo "BASH=$BASH_VERSION"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

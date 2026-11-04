@@ -87,7 +87,7 @@ python3 -c "import sys;sys.path.insert(0,'$CODE_CC');from ccards import config;s
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # MECH-REDAUTO-1 #75 用：脚本所在 cc-team 根的**绝对路径**必须在 cd 进临时仓之前固化——
-# 脚本第 11 行起 cwd=$REPO，相对 BASH_SOURCE 事后解会得空串（泳道工作树首跑实锤）。
+# 脚本第 11 行起 cwd=${REPO}，相对 BASH_SOURCE 事后解会得空串（泳道工作树首跑实锤）。
 SELF_CC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # REQ-MERGE-GATE-1 配套修正：$CARD 自锚本树（与 adversary.sh 的 $N 同一形态，#73 注释的延伸）。
 # 旧硬编码 /mnt/c/...dataworks-ai = 永远测主仓代码——泳道改了 commands.py，套件套的却是别人的
@@ -267,7 +267,7 @@ for r in 1 2 3 4 5 6; do
   wait
   sa=1; [ "$(cat $ST_TMP/rwa.rc)" = "0" ] || sa=0
   sb=1; [ "$(cat $ST_TMP/rwb.rc)" = "0" ] || sb=0
-  if [ $((sa+sb)) -ne 1 ]; then bad "并发领第$r轮双赢(赢家=$((sa+sb)))"; rbad=1; fi
+  if [ $((sa+sb)) -ne 1 ]; then bad "并发领第${r}轮双赢(赢家=$((sa+sb)))"; rbad=1; fi
 done
 [ $rbad -eq 0 ] && ok "并发领卡6轮每轮恰好1成功" || true
 [ "$(ls $CC_TEAM_HOME/claims | grep -c '^R1$')" = "1" ] && ok "并发领卡单锁" || bad "并发领卡多锁"
@@ -504,7 +504,7 @@ $CARD verdict 0231 PASS >/dev/null && ok "DONE→VERIFIED 正常机验链不受�
 # 32 跨OS互解（真实盘符沙箱，非 /tmp）：同一 done 验货，C:/ 与 /mnt/c 双形式同过；不存在路径原样报错
 # MECH-SELFTEST-WIN-1 宿主形态：WSL 侧逐字保持双向互解原断言；Windows 主机没有 /mnt/c 挂载，
 # 照抄旧路径 mkdir 会经 Git 根污染 C:\Program Files\Git\mnt\（2026-11-03 run1 实锤曾造成），
-# 故沙箱改落真实盘符 $HOME，「C:/ 形式」断言在本宿主=原生盘符用法照常断，
+# 故沙箱改落真实盘符 ${HOME}，「C:/ 形式」断言在本宿主=原生盘符用法照常断，
 # 「/mnt/c 形式」方向属 WSL 专属语义 → 不构造 0233 子断言、显式 SKIP 计入 skips=（WSL 侧照跑）。
 # MECH-TRAIN-ADR-1②：目录名带 $$ 逐跑唯一（原两分支均为全局固定名，双 selftest 并跑互 rm）。
 if [ "$HOST_OS" = windows ]; then
@@ -743,10 +743,10 @@ GENQ="import json,os;print(json.load(open(os.path.join(os.environ['CC_TEAM_HOME'
 G0=$(python3 -c "$GENQ")
 $CARD create 0640 --title DAG --verify "true" >/dev/null
 G1=$(python3 -c "$GENQ")
-[ "$G1" -gt "$G0" ] 2>/dev/null && ok "写命令自动刷新(generation $G0→$G1)" || bad "generation 未随账变增"
+[ "$G1" -gt "$G0" ] 2>/dev/null && ok "写命令自动刷新(generation ${G0}→$G1)" || bad "generation 未随账变增"
 $CARD set 0640 --title DAG >/dev/null   # 同值重写(updated_at 变但图语义字段未变)
 G2=$(python3 -c "$GENQ")
-[ "$G2" = "$G1" ] && ok "digest 相同不空刷(幂等)" || bad "无账变 generation 空增 $G1→$G2"
+[ "$G2" = "$G1" ] && ok "digest 相同不空刷(幂等)" || bad "无账变 generation 空增 ${G1}→$G2"
 
 # 50 dag --check 红蓝检：新鲜=rc0；裸改=rc1；显式 dag 以卡为准重刷后转绿
 $CARD dag --check >/dev/null 2>&1 && ok "--check 新鲜=rc0" || bad "--check 误报过期"
@@ -950,7 +950,7 @@ assert d["digest"] == dg["digest"]   # 与物化视图同一本账——plan 不
 PYEOF
 G1=$(python3 -c "import json,os;print(json.load(open(os.path.join(os.environ['CC_TEAM_HOME'],'state','graph.json'),encoding='utf-8'))['generation'])")
 EV2=$(wc -l < $CC_TEAM_HOME/state/events.log)
-[ "$EV1" = "$EV2" ] && ok "plan 只读零写(events 行数不动)" || bad "plan 写账了($EV1→$EV2)"
+[ "$EV1" = "$EV2" ] && ok "plan 只读零写(events 行数不动)" || bad "plan 写账了(${EV1}→$EV2)"
 # ENG2 后 dag.json 已并入 graph.json——此两行若不改读 graph 会拿空串比空串=空转假绿(2026-10-31 自查发现)
 [ "$(python3 -c "import json,os;print(json.load(open(os.path.join(os.environ['CC_TEAM_HOME'],'state','graph.json'),encoding='utf-8'))['generation'])")" = "$G1" ] \
   && ok "plan 不触图刷新(generation 不动)" || bad "plan 越权刷图"
@@ -1182,7 +1182,7 @@ else bad "#74 道栏文案守卫红(见 $ST_TMP/p74.out)"; tail -8 $ST_TMP/p74.o
 # 75 MECH-REDAUTO-1 dispatcher 例行复跑 DONE 红卡（补50 后判据红停留 DONE 曾是死账——
 #     只能等 PM 批 verdict/修复卡碰巧，REG-2 人肉复跑实锤）：绿卡到期自动转正（verdict 痕
 #     by=redauto@dispatcher）/ 红卡留 DONE 且 logs/redauto.tail 续痕 / 在制 CLAIMED 卡不打扰 /
-#     recycle 报红卡龄（REDCARD 行+redcards= 汇总）。路径用脚本相对 $SR72：主仓跑测主仓码、
+#     recycle 报红卡龄（REDCARD 行+redcards= 汇总）。路径用脚本相对 ${SR72}：主仓跑测主仓码、
 #     泳道工作树跑测工作树码——红绿锁不依赖合入。独立沙箱 $ST_TMP/cc-team-r72 防串染；
 #     env -u CC_AUTO_VERIFY 双保险：复跑池起点必须是无开关停留的 DONE（71 语义前提）。
 SR72="$SELF_CC"
@@ -1236,7 +1236,7 @@ rm -rf $T72 $R72
 #   ③死 pid+活流：锚=不存在的进程号、但 beat 续写新鲜 → ALIVE 不动——判活若再看进程表
 #      （旧代码 pid 死即杀），本断言必红；
 #   ④留档锁：claim.json 仍记 pid/pid_ns 字段（退役≠删字段，排障审计面保留）。
-#   跨OS锚夹具走独立沙箱 $ST_TMP/cc-team-r76；代码取 $SELF_CC（工作树改工作树测，红绿锁不依赖合入）。
+#   跨OS锚夹具走独立沙箱 $ST_TMP/cc-team-r76；代码取 ${SELF_CC}（工作树改工作树测，红绿锁不依赖合入）。
 T76=$ST_TMP/cc-team-r76
 rm -rf $T76; mkdir -p $T76
 C76(){ env -u CC_AUTO_VERIFY CC_TEAM_HOME=$T76 python3 "$SELF_CC/cards_dag.py" "$@"; }
@@ -2521,7 +2521,7 @@ for f93 in schedule argv hb board env; do
   rc93=$?
   redn93=$(grep -c '^FAIL' $ST_TMP/s93f.out)
   exp_red=1; [ "$f93" = "env" ] && exp_red="$exp93env"
-  [ $rc93 -eq 1 ] && [ "$redn93" = "$exp_red" ] && grep -q "HAS-RED($exp_red) fault=$f93" $ST_TMP/s93f.out     || { bad "93.2 fault=$f93 应恰红${exp_red}项rc1（实 rc=$rc93 fails=$redn93）"; n93=1; }
+  [ $rc93 -eq 1 ] && [ "$redn93" = "$exp_red" ] && grep -q "HAS-RED($exp_red) fault=$f93" $ST_TMP/s93f.out     || { bad "93.2 fault=$f93 应恰红${exp_red}项rc1（实 rc=$rc93 fails=${redn93}）"; n93=1; }
 done
 [ $n93 -eq 0 ] && ok "93.2 五注入各恰红其位(schedule/argv/hb/board=1, env=子环境族三件套)"
 grep -q "TC11" "$SELF_CC/tests/boot_check.sh"   && grep -q "ctrld.heartbeat" "$SELF_CC/tests/boot_check.sh"   && grep -q "CTRLD_REQUIRED" "$SELF_CC/tests/boot_check.sh"   && ok "93.3 boot_check TC11 ctrld 活性断言在位" || bad "93.3 boot_check 缺 TC11/ctrld 活性断言（被摘?）"
