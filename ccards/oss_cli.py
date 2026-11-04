@@ -45,7 +45,10 @@ except Exception:
 # 且 dispatch selftest T11 的「正本在仓」断言必红——2026-11-04 CI 首绿前补账）
 RELEASE_DIRS = ("ccards", "ops", "tests", "deploy", ".github", "bin")
 RELEASE_FILES = ("cards_dag.py", "README.md", "pyproject.toml", "LICENSE",
-                 "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", ".gitattributes")
+                 "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", ".gitattributes",
+                 # demo.gif=README 首屏动画资产（2026-11-04 README-UX 轮补：export 根文件按清单点名，
+                 # 漏收=公仓死图；readme-story-test T7 差分锁防再犯——引用资产必须同时在导出面）
+                 "demo.gif")
 
 # Claude Code 官方安装面（2026-11-03 实查 code.claude.com/docs/en/setup）：
 # 原生安装免 Node、自带更新；npm 通道需 Node 22+，全平台兜底。

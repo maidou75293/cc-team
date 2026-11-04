@@ -8,7 +8,10 @@
 #   T4 前置三条：模型随 Claude Code 自带 / 引擎零外部依赖不上云 / 探测缺位只打印官方安装命令；
 #   T5 语气闸门：剥除图片与链接语法后，正文第一个含中文段落不得出现感叹号（专业，不叫卖）；
 #   T6 机器表不漂移：README 四张 STATE-* 标记表与 ccards/statemachine.py 逐行同源
-#      （与 state_std_test S2 同判据——头部怎么改，机器契约区必须原样在位）。
+#      （与 state_std_test S2 同判据——头部怎么改，机器契约区必须原样在位）；
+#   T7 导出面同源（11-04 死图事故补锁）：README 引用的每个本地图片资产必须同时在发布
+#      清单内（oss_cli.RELEASE_FILES 点名 或 RELEASE_DIRS 目录覆盖）——判据全绿≠公仓有图，
+#      export 根文件按清单点名，漏一行=公仓首页 404 死图（demo.gif 实踩）。
 # 跑法：python -I cc-team/tests/readme-story-test.py（exit 0=全绿；全程只读，不写任何账）
 import io, os, re, sys, tempfile
 
@@ -215,8 +218,28 @@ def t6():
         else bad("T6 必填字段表缺态", t)
 
 
+# ─────────────────────── T7 导出面同源（引用资产必在发布清单） ───────────────────────
+def t7():
+    from ccards import oss_cli                                  # noqa: E402
+    urls = [m.group(1).strip().lstrip("./")
+            for m in re.finditer(r"!\[[^\]]*\]\(([^)]*)\)", readme_text())]
+    local = [u for u in urls if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", u) and u]
+    if not local:
+        return bad("T7 导出面", "README 无任何本地图片引用（头引图被删了？）")
+    for u in local:
+        if not os.path.isfile(os.path.join(SRC, u)):
+            bad("T7 导出面", "引用资产不在仓内: %s" % u)
+            continue
+        top = "/" not in u
+        covered = (u in oss_cli.RELEASE_FILES) if top else (u.split("/")[0] in oss_cli.RELEASE_DIRS)
+        if covered:
+            ok("T7 资产 %s 在发布清单内" % u)
+        else:
+            bad("T7 导出面", "%s 在仓但不在 RELEASE_FILES/DIRS——export 必漏=公仓死图" % u)
+
+
 if __name__ == "__main__":
-    for fn in (t1, t2, t3, t4, t5, t6):
+    for fn in (t1, t2, t3, t4, t5, t6, t7):
         try:
             fn()
         except Exception as e:                               # 判据自身异常=红，不许静默
