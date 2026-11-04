@@ -11,10 +11,24 @@
 #   同键聚合 count++），其后每 IDLE_REPEAT(10) 拍重申；绑上/离账=清账。
 # 纪律（守卫要验过它红得起来）：C1~C7 绿=全链判据；C8 红=撤闸差分对——源码串改摘掉 alarm_emit
 #   调用行（marker 先验在场）重 exec，同流程必「零报警」，若仍见 BIND-MISS=假锁。
+# ── BUG-BIND-PMCLAIM-EXEMPT-1（2026-11-04 夜，本卡随增）──
+# 病灶：常驻岗自执卡（pm-mailbox 等，claim kind≠lane）不经 dispatch 起班，简报双锚转录结构性
+#   不存在=discover_session 永不绑上——旧形连拍账无 kind 闸，岗持卡连拍到阈必响 ALARM BIND-MISS
+#   喂 S6（实锤 REQ-OSS-README-UX-1@pm-mailbox 22:51 起响）；同期 recycle session 铃 x12 同根。
+# 修复形：豁免判定单入口=ops/dispatch 顶层 claim_is_selfexec（kind≠lane，禁岗名字面量——
+#   pm/pm-mailbox/pmmail 别名六形会漂移；落 dispatch 而非 plan 文案建议的 ccards/config=
+#   卡面 files 域只声明 ops/tests 四件、done 越域闸对域外文件机械拒勾，判定单点/零散点/
+#   零岗名的规格本体不变——交卷注明）；dispatch 连拍账/半成/签收/尸检/unbind 四处、
+#   recycle 回收探针、idle_pulse 停摆归因全部函数内并轨同一入口（recycle 判死面与铃语义零改动，
+#   selftest.sh #48/#67 与 lane-silence S11 既有护栏照常绿——本卡收的是「口径散点」非「铃」）。
+# 新用例：C9 豁免（岗卡零连拍零报警）；C10 差分对照（派单 lane 卡照连拍到阈，豁免不波及）；
+#   C11 撤豁免差分（摘闸重 exec 岗卡必重新进账出警=守卫红得起来）；C12 单入口判定表；
+#   C13 recycle 真形不判死（沙箱实认领+三轮 apply：CLAIMED 保住+文案兼容+口径已并轨）；
+#   C14 idle_pulse 归因纯函数（在岗全自执=结构性静默，ready 优先与旧形对照不变）。
 # 跑法: python -I tests/bind-miss-streak-test.py  （exit 0 + 尾行 BIND_MISS_LOCK_PASS = 全绿）
 # 沙箱独立账家（CC_BINDMISS_HOME 可移，防并跑互踩）：claims/state/proj/code 全落临时区，
 #   run_gate/trace/alarm 落笔全部桩化，零真账、零真会话、零 powershell。
-import json, os, shutil, sys, tempfile, time, types
+import json, os, shutil, subprocess, sys, tempfile, time, types
 from datetime import datetime
 
 try:
@@ -78,12 +92,15 @@ def load_dispatch(sandbox, src_text=None):
     return mod, log
 
 
-def put_claim(sandbox, cid, bound=False, lane="st1"):
+def put_claim(sandbox, cid, bound=False, lane="st1", kind=None):
     d = os.path.join(sandbox, "claims", cid)
     os.makedirs(d, exist_ok=True)
+    body = {"session_id": "sid-123" if bound else "-", "lane": lane,
+            "ts": datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")}
+    if kind:
+        body["kind"] = kind                       # BUG-BIND-PMCLAIM-EXEMPT-1：岗自执形=kind session
     with open(os.path.join(d, "claim.json"), "w", encoding="utf-8") as f:
-        json.dump({"session_id": "sid-123" if bound else "-", "lane": lane,
-                   "ts": datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")}, f)
+        json.dump(body, f)
 
 
 def bind_miss_lines(log):
@@ -186,11 +203,154 @@ def main():
     else:
         bad("C8b 撤闸差分对", "marker 缺席无法 exec")
 
+    # ============ BUG-BIND-PMCLAIM-EXEMPT-1 用例（C9~C15） ============
+    # C9 豁免①：常驻岗自执卡（kind=session）连拍 8 拍——零报警、零入账、零探测绑定
+    sbx9 = os.path.join(HOME, "home9")
+    m9, log9 = load_dispatch(sbx9)
+    cid9 = "CARD-EX1"
+    put_claim(sbx9, cid9, kind="session", lane="pm-mailbox")
+    for _ in range(8):
+        m9.backfill_binds({cid9: "pm-mailbox"})
+    ok("C9a 岗自执卡连拍8拍零 BIND-MISS（豁免出警面）", not bind_miss_lines(log9),
+       str(bind_miss_lines(log9)[:2]))
+    streak9 = json.load(open(m9.BIND_STREAK, encoding="utf-8"))
+    ok("C9b 岗自执卡不进连拍账（豁免入账面）", cid9 not in streak9 and not streak9, str(streak9))
+    ok("C9c 岗自执卡连补绑探测都不做（结构性无转录，省 IO 亦防误绑）", not m9._BIND_GATES,
+       str(m9._BIND_GATES[:2]))
+
+    # C10 差分对照②：同拍里派单 lane 卡（kind=lane 显式形）照常连拍到阈出警——豁免不漏派单族
+    sbx10 = os.path.join(HOME, "home10")
+    m10, log10 = load_dispatch(sbx10)
+    put_claim(sbx10, "CARD-EX2A", kind="session", lane="st1")
+    put_claim(sbx10, "CARD-EX2B", kind="lane", lane="st1")
+    for _ in range(5):
+        m10.backfill_binds({"CARD-EX2A": "st1", "CARD-EX2B": "st1"})
+    ml = bind_miss_lines(log10)
+    ok("C10a 派单 lane 卡到阈恰一次出警（豁免不波及）", len(ml) == 1, str(ml[:2]))
+    ok("C10b 报警行只含 lane 卡不含自执卡", bool(ml) and "CARD-EX2B" in ml[0]
+       and "CARD-EX2A" not in ml[0], str(ml[:1]))
+    streak10 = json.load(open(m10.BIND_STREAK, encoding="utf-8"))
+    ok("C10c 连拍账只记 lane 卡（=5），自执卡无键",
+       streak10.get("CARD-EX2B") == 5 and "CARD-EX2A" not in streak10, str(streak10))
+
+    # C11 撤豁免差分②（守卫红得起来）：摘 BIND-EXEMPT 闸重 exec——岗卡必重新入账出警
+    src11 = open(DP, encoding="utf-8").read()
+    lines11 = src11.splitlines(keepends=True)
+    gi = [i for i, l in enumerate(lines11)
+          if l.strip().startswith("if claim_is_selfexec(d):") and "BIND-EXEMPT" in l]
+    ok("C11a 豁免闸 marker 在场且唯一（锁腐=硬败）", len(gi) == 1, "n=%d" % len(gi))
+    if len(gi) == 1:
+        indent = lines11[gi[0]][:len(lines11[gi[0]]) - len(lines11[gi[0]].lstrip())]
+        gutted11 = "".join(lines11[:gi[0]]
+                           + [indent + "if False:  # 撤豁免（差分注入）\n"]
+                           + lines11[gi[0] + 1:])
+        sbx11 = os.path.join(HOME, "home11")
+        m11, log11 = load_dispatch(sbx11, src_text=gutted11)
+        put_claim(sbx11, "CARD-EX3", kind="session", lane="pm-mailbox")
+        for _ in range(6):
+            m11.backfill_binds({"CARD-EX3": "pm-mailbox"})
+        ok("C11b 撤豁免实跑=岗卡重新入账到阈出警（差分对红得起来）",
+           bool(bind_miss_lines(log11))
+           and json.load(open(m11.BIND_STREAK, encoding="utf-8")).get("CARD-EX3") == 6,
+           str(bind_miss_lines(log11)[:1]))
+    else:
+        bad("C11b 撤豁免差分", "marker 缺席无法 exec")
+
+    # C12 单入口判定表：三处 ops 并轨此函数，语义必须逐档合卡面口径
+    # 判定单入口落 ops/dispatch（卡面 files 域内；非 plan 文案的 ccards/config，交卷注明）
+    if os.path.join(SRC, "ops") not in sys.path:
+        sys.path.insert(0, os.path.join(SRC, "ops"))
+    from dispatch import claim_is_selfexec as _judge
+    _cfgs = types.SimpleNamespace(claim_is_selfexec=_judge)
+    ok("C12a kind=lane→派单族(不豁免)", _cfgs.claim_is_selfexec({"kind": "lane"}) is False)
+    ok("C12b kind=session→自执豁免", _cfgs.claim_is_selfexec({"kind": "session"}) is True)
+    ok("C12c 缺 kind 默认 lane=派发侧保守进账", _cfgs.claim_is_selfexec({}, default="lane") is False)
+    ok("C12d 缺 kind 默认 session=recycle 无锚侧保守不回收",
+       _cfgs.claim_is_selfexec({}, default="session") is True)
+    ok("C12e 多源优先（meta 先 claim 后）",
+       _cfgs.claim_is_selfexec({"kind": "session"}, {"kind": "lane"}) is True
+       and _cfgs.claim_is_selfexec({}, {"kind": "lane"}) is False)
+    ok("C12f 未知 kind 归自执（保守不回收向）+ None 安全",
+       _cfgs.claim_is_selfexec({"kind": "weird"}) is True
+       and _cfgs.claim_is_selfexec(None) is False
+       and _cfgs.claim_is_selfexec(None, default="session") is True)
+
+    # C13 recycle③ 真形不判死：沙箱真认领（kind=session+真道锁）+全环 apply 三轮
+    rec_home = os.path.join(HOME, "rec")
+    shutil.rmtree(rec_home, ignore_errors=True)
+    os.makedirs(os.path.join(rec_home, "logs"), exist_ok=True)
+    envr = dict(os.environ, CC_TEAM_HOME=rec_home, PYTHONIOENCODING="utf-8")
+    dag = os.path.join(SRC, "cards_dag.py")
+    r1 = subprocess.run([sys.executable, "-I", dag, "create", "SE-1", "--title", "岗自执卡沙箱",
+                         "--verify", "true", "--lanes", "ANY", "--files", "cc-team/"],
+                        env=envr, capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=120)
+    r2 = subprocess.run([sys.executable, "-I", dag, "claim", "SE-1", "--owner", "pm-mailbox"],
+                        env=envr, capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=120)
+    claim_e1 = {}
+    try:
+        claim_e1 = json.load(open(os.path.join(rec_home, "claims", "SE-1", "claim.json"),
+                                  encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    ok("C13a 真形认领=kind session（复现今晚 22:46 pm-mailbox 形：无 pid 无预置道锁）",
+       r1.returncode == 0 and r2.returncode == 0 and claim_e1.get("kind") == "session",
+       ((r1.stdout or "") + (r1.stderr or "") + (r2.stdout or "") + (r2.stderr or ""))[:200])
+    rcy = os.path.join(SRC, "ops", "recycle.py")
+    outs, rcs = [], []
+    for _ in range(3):
+        rr = subprocess.run([sys.executable, "-I", rcy, "--apply", "--ring", "full"],
+                            env=envr, capture_output=True, text=True, encoding="utf-8",
+                            errors="replace", timeout=180)
+        outs.append((rr.stdout or "") + (rr.stderr or ""))
+        rcs.append(rr.returncode)
+    try:
+        stat = ((json.load(open(os.path.join(rec_home, "state", "graph.json"),
+                                encoding="utf-8")).get("cards") or {}).get("SE-1") or {}).get("status")
+    except (OSError, ValueError) as e:
+        stat = "图读炸:%r" % e
+    ok("C13b 全环 apply 三轮 rc=0（岗自执卡不炸尸检主链）", all(rc == 0 for rc in rcs), str(rcs))
+    ok("C13c 无锚自执卡不被「无转录」判死：状态恒 CLAIMED、零 SILENCE-DETACH/WORKER-DIED",
+       stat == "CLAIMED" and not any("SILENCE-DETACH SE-1" in o or "WORKER-DIED SE-1" in o
+                                      for o in outs), "status=%s" % stat)
+    ok("C13d session 卡点名行照出（与 selftest.sh#48 / lane-silence S11 既有护栏零相撞）",
+       any("session 执行卡" in o for o in outs))
+    rsrc = open(rcy, encoding="utf-8").read()
+    ok("C13e recycle 判定已并轨单入口（两处调用；内联 kind 判定零残留）",
+       rsrc.count("claim_is_selfexec(") == 2 and 'kind == "session"' not in rsrc
+       and 'or "lane"' not in rsrc, "n=%d" % rsrc.count("claim_is_selfexec("))
+
+    # C14 idle_pulse③ 归因收口（纯判定函数 + 差分对照）
+    ipy = os.path.join(SRC, "ops", "idle_pulse.py")
+    sys.path.insert(0, os.path.dirname(ipy))
+    import idle_pulse as ip
+    sys.path.pop(0)
+    w1 = ip.stall_attribution(0, 2, 2)
+    ok("C14a 在制全岗自执=结构性静默归因（不错指派发断）",
+       "结构性静默" in w1 and "派发/启动断" not in w1, w1)
+    ok("C14b 差分：在制全派单族=旧文案逐字不变（豁免不波及）",
+       ip.stall_attribution(0, 2, 0) == "在岗断流（有在制无活性）")
+    ok("C14c ready 积压优先不变（派发职责不随岗豁免退让）",
+       ip.stall_attribution(1, 1, 1) == "派发/启动断（账上有料却无活性）")
+    ok("C14d 供料枯竭/三源皆空两支保留（快照炸负值保守向）",
+       ip.stall_attribution(0, 0, 0) == "供料枯竭（ready=0 且 claimed=0，该发新卡）"
+       and ip.stall_attribution(-1, -1, -1) == "活性三源皆空（账本/转录/心跳都读不到）")
+    isrc = open(ipy, encoding="utf-8").read()
+    ok("C14e idle_pulse 归因走单入口", isrc.count("claim_is_selfexec(") >= 1)
+
+    # C15 散点普查：dispatch 判定全并轨（≥4 处调用、旧内联口径零残留）
+    dsrc15 = open(DP, encoding="utf-8").read()
+    ok("C15 dispatch 判定散点全收口（连拍账/半成上游/签收/尸检/unbind 走同入口）",
+       dsrc15.count("claim_is_selfexec(") >= 4
+       and 'str(d.get("kind") or "lane")' not in dsrc15,
+       "n=%d" % dsrc15.count("claim_is_selfexec("))
+
     if fails:
         print("BIND_MISS_LOCK_FAIL fails=%d %s" % (len(fails), ";".join(fails)))
         return 1
     shutil.rmtree(HOME, ignore_errors=True)
-    print("BIND_MISS_LOCK_PASS cases=8")
+    print("BIND_MISS_LOCK_PASS cases=15")
     return 0
 
 

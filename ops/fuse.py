@@ -23,6 +23,12 @@
 #       b=能合 → 自动 merge --no-ff 进主干（前置三闸：主干工作树 clean / HEAD=主干 / 复验干跑
 #       仍净；任一不满足→不赌，报警叫 PM）；c=冲突 → 「待合·撞车」红灯（alerts 账=看板现读）
 #       + 叫 PM 人工解冲突。合并后转正仍走 REDAUTO/verdict 既有通道，本器不越权落 VERIFIED。
+#       b 类判类后、真合前再加扫（MECH-FUSE-S3-TIPSCAN-1，二轮§五-1 遗留面）：卡面锚只一笔，
+#       锚外同 owner（卡交付仓 c["repo"]+交卷支 done_anchor.branch）树尖还有后续 commit 的
+#       「多锚卡」按单锚自动并=只并残缺半边（UX-BOARD-COLLAPSE-1 三笔半成品之首实锤）。
+#       命中≥1 改判「待合·多锚」不并、叫 PM 人工定锚；树尖探不出=兜底按同卡交卷流水(events
+#       CLAIMED->DONE 多笔)判。无归属 commit 按本卡候并算=判不了挡（宁叫人不误并，s3_classify
+#       同语义）；只带别卡号=泳道已挪下一单，不算本卡账不误挡。
 #   S4 生效锁    常驻件进程起时早于其命脉文件最后盘改时(mtime)=旧进程没通电 → NOT-ENERGIZED
 #       红灯 + 白名单件（cc-dispatch/cc-ctrld）自动重启；非白名单只报不动。重启走同 S1 通道，
 #       共用节流防分钟级连环重启。口径变更（BUG-FUSE-SELFKILL-1④，00:28:16 错杀案）：判据
@@ -547,6 +553,40 @@ def s3_classify(dryrun_rc):
     return "?"
 
 
+# 卡号 token 形态=大写段-连字符段（REQ-X-1 / UX-BOARD 类，commit-msg 钩子强制的 动词(卡号): 携带）。
+# 纯 [A-Z]+数字 无连字符（S3/D02）不算——不误吞正文缩写造伪归属。
+_CARDID_TOK_RE = re.compile(r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+")
+
+
+def s3_tipscan_filter(cid, entries):
+    """MECH-FUSE-S3-TIPSCAN-1 锚外归属过滤（纯判据，单元面直测）：
+    entries=[(h, subj), ...]=卡锚之后至泳道树尖的后续 commit，留下者计入本卡「锚外候并」：
+      subject 带本卡号             → 本卡多锚（二轮实锤 UX-BOARD-COLLAPSE-1 三笔半成品之首）
+      不带任何卡号 token（无归属）→ 宁红不猜按本卡候并算（判不了=挡，与 s3_classify 同语义）
+      只带别卡号                   → 泳道已挪去下一单，不算本卡头的账（不误挡可并卡）
+    """
+    kept = []
+    for h, subj in entries or []:
+        toks = _CARDID_TOK_RE.findall(subj or "")
+        if not toks or cid in toks:
+            kept.append((h, subj))
+    return kept
+
+
+def s3_tipscan_decide(followups, tip_known, done_events_n):
+    """MECH-FUSE-S3-TIPSCAN-1 多锚扫描判定（纯判据；返回 (n_suspect, src)）：
+      git 面实锤   锚外同卡/无归属 commit ≥1 笔 → (n, "git")=多锚存疑禁单锚自动并
+      兜底面       树尖读不出(tip_known=False) 且 同卡交卷流水 >1 笔（events 多次 CLAIMED->DONE
+                   =返工/换锚，卡面 commit 未必=域内末笔）→ (n, "events")
+      其余         → (0, "") 照常并线路径。
+    树尖读得出且锚外零命中=git 面已证单锚完整，账史不再三猜（否则返工过的卡永不可自动并）。"""
+    if followups:
+        return len(followups), "git"
+    if not tip_known and done_events_n > 1:
+        return done_events_n, "events"
+    return 0, ""
+
+
 def s4_decide(proc_start, lifelines, grace_s):
     """生效锁：命脉文件最后盘改时(mtime) 晚于 进程起时+宽限 = 旧进程没通电。
     返回滞后件清单 [(文件, 盘改时, 分钟)]。（BUG-FUSE-SELFKILL-1④：提交时口径作废。）"""
@@ -712,14 +752,18 @@ def seg_s2(cfg):
         trace(cfg, "S2 %s 处置=%s" % (cid, act(cfg, "s2", do_stoploss)))
 
 
-def _git(cfg, *args):
+def _repo_git(cfg, repo, *args):
     try:
-        p = subprocess.run([cfg["git"], "-C", cfg["main_repo"]] + list(args),
+        p = subprocess.run([cfg["git"], "-C", repo] + list(args),
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=120, creationflags=NO_WIN)
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
     except (OSError, subprocess.TimeoutExpired):
         return 127, "git 不可达/超时"
+
+
+def _git(cfg, *args):
+    return _repo_git(cfg, cfg["main_repo"], *args)
 
 
 def _main_ancestor(cfg, commit):
@@ -729,6 +773,65 @@ def _main_ancestor(cfg, commit):
         return -1
     rc, _ = _git(cfg, "merge-base", "--is-ancestor", commit, cfg["main_ref"])
     return 0 if rc == 0 else 1
+
+
+def _done_events_count(cfg, cid):
+    """events 里本卡真实交卷笔数（多锚兜底面素材）：只数 old→DONE 迁移痕（CLAIMED->DONE 等）；
+    fuse 自身 DONE->DONE 处置/挡车痕 old==new 不计——否则兜底面自喂连环（S6 自触发键同纪律）。"""
+    n = 0
+    for l in read_events(cfg["home"]):
+        f = l.split("|")
+        if len(f) >= 3 and f[1].strip() == cid:
+            old, sep, new = f[2].strip().partition("->")
+            if sep and new == "DONE" and old != "DONE":
+                n += 1
+    return n
+
+
+def _s3_tipscan_scan(cfg, c):
+    """MECH-FUSE-S3-TIPSCAN-1 锚→树尖后续 commit 扫描（纯探测，判义在 s3_tipscan_decide）。
+    「同 owner」扫描域=卡面交付仓 c["repo"]（REQ-MERGE-GATE-1 由 cmd_done 落账）里的交卷支
+    done_anchor.branch；支名不可解/记录缺失=退该仓 HEAD。交付仓路径失踪（泳道已回收）=
+    在主干仓复核同名支（worktree 共享对象库）。两仓都探不出树尖才 tip_known=False 走兜底判义。
+    返回 (tip_known, [(h, subj), ...])；tip==锚 → (True, [])=正常单锚形。"""
+    commit = str(c.get("commit") or "").strip()
+    if not commit:
+        return True, []
+    anchor = c.get("done_anchor") or {}
+    branch = str(anchor.get("branch") or "")
+    if branch in ("", "HEAD", "detached") or branch == cfg["main_ref"]:
+        branch = ""
+    repos = []
+    repo = str(c.get("repo") or "").strip()
+    if repo and os.path.isdir(repo):
+        repos.append(repo)
+    if cfg["main_repo"] not in [os.path.abspath(x) for x in repos]:
+        repos.append(cfg["main_repo"])
+    for rp in repos:
+        rc, full = _repo_git(cfg, rp, "rev-parse", "--verify", commit + "^{commit}")
+        full = (full or "").strip()
+        if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", full):
+            continue
+        for ref in ([branch] if branch else []) + ["HEAD"]:
+            rc2, t2 = _repo_git(cfg, rp, "rev-parse", "--verify", ref + "^{commit}")
+            t2 = (t2 or "").strip()
+            if rc2 != 0 or not re.fullmatch(r"[0-9a-f]{40}", t2):
+                continue
+            if t2 == full:
+                return True, []
+            rc3, _ = _repo_git(cfg, rp, "merge-base", "--is-ancestor", full, t2)
+            if rc3 == 0:
+                rc4, out = _repo_git(cfg, rp, "log", "--max-count=200",
+                                     "--pretty=format:%h\x09%s", "%s..%s" % (full, t2))
+                if rc4 != 0:
+                    return False, []
+                entries = []
+                for ln in (out or "").splitlines():
+                    h, _, subj = ln.partition("\t")
+                    if h.strip():
+                        entries.append((h.strip(), subj.strip()))
+                return True, entries
+    return False, []
 
 
 def seg_s3(cfg):
@@ -757,6 +860,32 @@ def seg_s3(cfg):
         dry_rc, dry_out = _git(cfg, "merge-tree", "--write-tree", cfg["main_ref"], str(c["commit"]))
         klass = s3_classify(dry_rc)
         if klass == "b":
+            # MECH-FUSE-S3-TIPSCAN-1（二轮§五-1 遗留面；三轮§五-2 实锤「done 锚记 tip」之外仍漏后笔）：
+            # 净=能合 ≠ 完整。卡锚只一笔、锚外同 owner 树尖还有候并 commit 的多锚半成品卡，
+            # 按单锚自动并=残缺半边进主干（并折叠壳不并填行形）。判类后、真合前扫，命中≥1
+            # 改判「待合·多锚」不自动并、叫 PM 人工定锚——宁叫人不误并。
+            tip_known, followups = _s3_tipscan_scan(cfg, c)
+            kept = s3_tipscan_filter(cid, followups)
+            n_sus, ts_src = s3_tipscan_decide(kept, tip_known,
+                                              _done_events_count(cfg, cid) if not tip_known else 0)
+            if n_sus > 0:
+                alarm(cfg, "待合·多锚(FUSE-S3) %s 卡面锚外另有 %d 笔候并 commit(%s面)——多锚卡禁单锚自动并，PM 请人工定锚" % (
+                    cid, n_sus, ts_src))
+                first = (cfg["state"].get("s3_tipscan") or {}).get(cid) is None
+                def do_tipscan(cid=cid, c=c, n_sus=n_sus, ts_src=ts_src, kept=kept):
+                    cfg["state"].setdefault("s3_tipscan", {})[cid] = now
+                    head_h, head_s = (kept or [("-", "树尖读不出；同卡交卷流水多笔")])[0]
+                    fuse_event(cfg, cid, "DONE", "DONE",
+                               "FUSE-S3-TIPSCAN 多锚存疑(%s面) 锚外%d笔 首=%s %s 锚=%s" % (
+                                   ts_src, n_sus, head_h, head_s[:60], str(c.get("commit"))[:12]))
+                    run_pm_wake(cfg, "S3 多锚存疑：%s 卡面锚 %s 之外同 owner 另有 %d 笔候并 commit(%s面)——"
+                                     "禁单锚自动并，请扫泳道树尖人工定锚（REQ-FLEET-FUSE-1 S3·二轮§五-1）" % (
+                                     cid, str(c.get("commit"))[:12], n_sus, ts_src), "S3")
+                    return "BLOCKED"
+                res = act(cfg, "s3", do_tipscan) if first else "SEEN"
+                trace(cfg, "S3 %s 多锚存疑(%s面 %d笔) 不自动并·候PM定锚 首报处置=%s" % (
+                    cid, ts_src, n_sus, res))
+                continue
             def do_merge(cid=cid, c=c, age_min=age_min):
                 # 只查**被跟踪文件**的在途改动：真账仓常年有未跟踪杂物(tmp/、logs/、数据集)，
                 # 把它们当「脏」=自动并线永动不了；而在途人工改动(如看板未提交)必须避让——叫 PM。

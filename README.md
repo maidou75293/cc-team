@@ -11,6 +11,32 @@
 
 > 通用发行版。现网运营记录（历史裁定、验收数字、运维台账）留在源仓库 `docs/`，不随发布包分发。
 
+## 一图看懂：账本驱动，对话框进出
+
+```mermaid
+flowchart LR
+  YOU["你<br/>只对话，不敲命令"] -->|"粘 git 地址 + 一句话"| WIZ["六步向导<br/>问需求 → 出方案书 → 你确认"]
+  WIZ -->|确认=批量立卡| LED[("卡账本<br/>state/graph.json + events.log<br/>cards_dag.py 带写锁唯一入口")]
+  LED --> CTRL["常驻引擎 ctrld<br/>一个进程内时间轮跑全部周期环"]
+  CTRL --> DISP["派单 dispatch<br/>多道并行起 worker 会话"]
+  DISP --> LANE["泳道 worker<br/>git worktree 写码交卷"]
+  LANE -->|交卷 commit| GATE["机器验收<br/>复跑卡面判据"]
+  GATE -->|绿=盖章| MAIN[("git 主干")]
+  GATE -->|红=不放行/打回| LED
+  CTRL --> KEEP["回收与看护<br/>心跳断流·合流·看门"]
+  KEEP -.->|死卡自动回队头| LED
+```
+
+读图三条（这就是「凭什么信它」的全部答案）：
+
+- **账本是唯一事实**：卡的每一步都带写锁明文落盘——`graph.json` 现态 + `events.log` 全史 +
+  `claims/` 认领凭证。断电不丢、可入 git 评审、完全归你，没有任何云端托管（反例：Vibe Kanban
+  公司 2026-04 关停，云端看板一并消失）。
+- **验收不靠人点头**：判据写在卡面，done 后机器统一复跑，绿了才盖章；僵尸有收尸，心跳断流自动
+  回收重派；每个防护配「撤掉修复必红」的差分自证，全套锁在 CI 的 Linux/Windows 每推必跑。
+- **你只做三件事**：粘一次地址、说一句话、看实时播报。你 `git log` 里带机器验收痕的 commit
+  就是你自家流水线的放行信号——部署留在你的管线，引擎不碰你的生产环境。
+
 ## 前置（一共三条，没有其他）
 
 - **大模型随 Claude Code 自带**：cc-team 不配置任何模型、不要任何 API key——你的环境能跑 `claude`，就已经具备全部智能。
@@ -19,22 +45,16 @@
 
 ## 开干：不装环境、不记命令
 
-**① 把 git 地址粘给 Claude Code，带一句话**
-
-在你已经装好、已经登录的 Claude Code 里，把这个仓库的地址贴给它，一句话说明来意：
+**① 把仓库的 git 地址粘给 Claude Code，带一句话**——在你已登录的 CC 里说：
 
 > 把这个仓库装上，让你能带团队干活：`<cc-team 的 git 地址>`
 
-剩下的全是 CC 的活：取地址、跑 `cc init` 生成运行时目录与配置、按 init 落盘的常驻模板
-（Windows 计划任务 / macOS launchd / Linux systemd 三选一，一个常驻任务就够）把引擎接成
-开机自启，并把自检报到 `ALL_PASS`。派发/回收/合流各环都跑在这个常驻进程内（进程内时间轮，
-不给每个环建 OS 定时器）。
-探测到缺什么，引擎**只打印官方安装命令**让你决定，绝不静默代装。主线自始至终要你做的只有
-一件事：粘一次地址、说一句话。
+剩下全是 CC 的活：`cc init` 生成运行时目录与配置模板、按落盘的常驻模板装成开机自启
+（Windows 计划任务 / macOS launchd / Linux systemd 三选一，此后全部周期跑在这一个常驻
+进程的时间轮里，不给每个环建 OS 定时器），自检报 `ALL_PASS`。探测缺什么**只打印官方安装
+命令**让你决定，绝不静默代装。
 
-**② 对 `cc` 说人话需求**
-
-裸 `cc` 即六步向导（内置在发行版里）：探测环境 → 问清需求 → 出方案书 → 你确认 →
+**② 对 `cc` 说人话需求**——裸 `cc` 进六步向导：探测 → 问需 → 出方案书 → 你回「确认」→
 批量立卡、起工位、实时播报。对话形如：
 
 - 你：我要建一个企业内部智能体：文档传上来能问答，按员工权限控制可见范围，回答要带出处
@@ -42,24 +62,14 @@
   怎么测（=验收判据）、后面怎么用……回复「确认」就立卡开工，回复「改X」继续调
 - 你：确认
 
-需求可以是任何一句人话。你不需要知道「立卡」「认领」「合流」这些词怎么拼成命令——
-那是引擎和 worker 之间的事，全部走账本与闸门。
+**③ 之后只看播报**——立卡入账、认领起会话、多道 worktree 并行写码、会话退出钩子自动跑你的
+验收命令、绿了并进主干，每个关键环节实时回对话：
 
-**③ 之后只看播报**
+- [立卡] SEARCH-TOPK 已入账待领 ｜ [工位] 在编 2 个：slot-1, slot-2
+- [开工] slot-1 领了它 → [交卷] 待机器复跑判据 → [验收绿·合入主干]
 
-派单器接手：立卡入账 → 认领 → 起会话（worker 也是 CC 会话，多道可同时飞）→ 各道在
-worktree 泳道写码提交 → 会话退出钩子自动跑你的验收命令 → 绿 = 已验收（VERIFIED）→
-合流看护快进并进主干。每个关键环节实时播报回对话：
-
-- [步骤5/6] [立卡] SEARCH-TOPK 已入账待领
-- [步骤5/6] [工位] 在编 2 个：slot-1, slot-2
-- [步骤5/6] [开工] 工位 slot-1 领了 SEARCH-TOPK
-- [步骤5/6] [交卷] SEARCH-TOPK 已提交，待机器复跑判据（工位 slot-1）
-- [步骤5/6] [验收绿·合入主干] SEARCH-TOPK 判据复跑通过
-
-你的 `git log` 里随之多出一个带机器验收痕的 commit——它就是你自己部署流水线的放行
-信号。部署动作留在你的管线，引擎不碰你的生产环境。安装/自测/导出/无守护直驱那套手工
-命令全在文末附录，主线上用不到。
+你不需要知道「立卡/认领/合流」怎么拼成命令——那是引擎和 worker 之间的事，全走账本与闸门；
+手工等价物全在文末附录，主线用不到。
 
 ## 不放心？先在沙箱彩排一遍
 
@@ -73,30 +83,6 @@ worktree 泳道写码提交 → 会话退出钩子自动跑你的验收命令 �
 ![第一版全链对话实录（SANDBOX · 按真实时戳加速回放）：同一对话框，建成的系统是「文档问答」小程序——提问「退货的期限是几天？」，答复带出处真打出来](demo-docqa.gif)
 
 *业主明令保留的第一版，原样存档可对照：同样是单一对话框全链实录，建成的系统换成「文档问答」小程序——三条泳道合入主干的文件组成它，提问带出处真答。头牌动画是它的下一版：建成的系统换成有界面的内部审批系统，并补上产品图确认与现场演示。*
-
-## 和现成方案的差异（2026-11 对公开项目实测调研）
-
-| 方案 | 状态存哪 | 怎么并行 | 怎么验收 | 现状/License |
-|---|---|---|---|---|
-| **cc-team** | **明文文件账本+追加式事件日志**，断电不丢、可入 git 评审 | git worktree 泳道 | **机器复跑卡面判据，绿了才 VERIFIED**；账本级僵尸回收与写入围栏（任期制） | 本项目 / MIT |
-| Claude Squad | 本地会话配置，无任务台账 | tmux + worktree | 人审 diff 再 checkout | 活跃 / AGPL-3.0 |
-| Claude Code Agent Teams | 官方文档自认：team 配置**会话结束即删**，/resume 不恢复成员，孤儿会话列于人工排障清单 | 共享任务列表认领 | hooks 槽位（闸门要自己写），实验特性默认关闭 | 专有软件 |
-| Vibe Kanban | 内部 SQLite（不透明） | 看板任务→worktree | 人审 diff/PR | **公司 2026-04 关停**转社区 / Apache-2.0 |
-| container-use | 容器日志+分支，无状态机 | Docker 容器 | 人审分支 | 停滞（release 止于 2025-08）/ Apache-2.0 |
-| Conductor / Copilot agent | 应用/平台侧托管 | worktree / 云沙箱 | 人审后合并 | 闭源商业 / 专有 SaaS |
-| LangGraph / CrewAI / AutoGen | 检查点或状态 JSON（依赖 SQLite/Postgres；社区公开指出 checkpoint≠可恢复执行） | 图节点/流程，非面向代码仓 | 无代码验收闸门概念；AutoGen 已入维护模式 | 框架类 / MIT 等 |
-
-两条结论：
-
-- **验收=机器复跑卡面判据，全表唯一无对等项**——其余方案的收口都是「人看一眼 diff」。
-- **账本完全归用户**——纯明文文件、无厂商账号、本地自主；反例是 Vibe Kanban 公司 2026-04 关停，云端看板被一并移除。
-
-## 凭什么信它
-
-- **已验收不靠人点头**：判据写在卡面，done 后由机器统一复跑，账本存 `verify_run` 痕。
-- **僵尸有收尸**：心跳断流回收、认领未起班尸检、会话身份绑锚防串卡——worker 中途死掉，卡自动回队头重派。
-- **闸门先证明红得起来**：每个防护配「撤掉修复必红」的注入自证（`--fault` 差分对），五套机制套件与发布锁在 CI 的 Linux/Windows 真机每推必跑。
-- **账本可审计**：`state/graph.json`（当前态）+ 追加式 `events.log`（全部转移）+ `claims/`（认领凭证），每一步谁、何时、依据什么都有痕。
 
 ## 概念与账本
 
@@ -120,8 +106,112 @@ cc-team/
 └── config.toml           # 可选：文件层配置（★不在发布包内，由 cc init 生成）
 ```
 
-## 状态=属主与迁移矩阵（同源机器读区，#80 锁逐行对账）
+## 常驻环与红绿锁（全部周期跑在上面那个常驻进程里）
+- `dispatch.py` —— 派单器：按名册找空闲泳道，取队首可领卡，起 worker 会话并绑锚。
+- `ctrld.py` —— 控制进程：一个进程内跑所有周期环（派发/回收/红检/看门/合流…），周期可配。
+- `recycle.py` —— 回收器：心跳断流、认领未起班、DONE 积压三类场景的自动 release/巡检。
+- `check_exit.py` —— agent 会话退出钩子：按会话身份安全结账（防串卡）。
+- `fuse.py` —— 交卷未合流看护：到点自动把泳道提交并进主干（干跑净才动）。
+- `inbox_watchdog.py` —— 信箱/事件看门：账本事件与外部消息通道的滞留告警。
+- `lane_registry.py` —— 泳道名册与垃圾会话目录清理（白名单三源并集，宁漏不误删）。
 
+`tests/` 为每个环节配红绿锁：`all.sh` 汇总跑五套（账本/对抗/回收守卫/判活/CC 环境检测），
+`oss-release-check.py` 是发布包自身的常驻锁（敏感清零/白名单边界/默认等价三段）。
+
+## 配置（一切定制走配置，默认值=引擎出厂行为）
+
+优先级：**环境变量 > `config.toml` 文件层 > 内置默认**。文件层发现顺序：
+`CC_CONFIG` 指向的文件 > 账本根（`CC_TEAM_HOME`）下的 `config.toml`。
+未识别的键只告警不报错（旧版引擎吃新版配置不炸）。
+
+内置默认全部**由仓位置/宿主环境派生**，不含任何机器名、用户名、盘符字面量——
+换机器/换用户/换操作系统目录布局，不改一行代码。
+
+常用键（`cc init` 生成的模板里有全量注释）：
+
+| 键 | 环境变量锚 | 含义 |
+|---|---|---|
+| `host.fleet_root` / `host.user_home` / `host.sessions_dir` / `host.win_root` | `CC_HOME` / `CC_USER` / `CC_PROJ` | 车队根、宿主用户主目录、终端 agent 会话转录目录、Windows 挂载根探测 |
+| `fleet.code_root` | `CC_CODE`、`DISPATCH_CODE_ROOT` | 泳道 worktree（`wf-<道>`）所在根 |
+| `engine.runner_cmd` | `CC_RUNNER` | 起一次终端 agent 会话的包装命令 |
+| `engine.powershell` | `DISPATCH_PS` | Windows 侧解释器（跨 WSL 场景） |
+| `dispatch.lane_cap` | `DISPATCH_CAP` | 同时在飞泳道上限（默认 6） |
+| `dispatch.heartbeat_path` | `DISPATCH_HB` | 派发器心跳文件 |
+| `dispatch.bind_wait_s` / `dispatch.dead_grace_s` | `DISPATCH_BIND_WAIT` / `DISPATCH_DEAD_GRACE_S` | 起班后找会话锚的有界等待 / 尸检宽限 |
+| `dispatch.redauto_every` | `DISPATCH_REDAUTO_EVERY` | 红检自动化每 N 圈跑一次（默认 10） |
+| `thresholds.beat_stale_min` | `CARD_STALE_MIN` | 心跳过期判死分钟（默认 15） |
+| `thresholds.silence_release_min` | `CARD_SILENCE_RELEASE_MIN` | 在制断流探针阈值分钟（默认 45） |
+| `engine.verify_timeout_s` | `CARD_VERIFY_TIMEOUT` | 验收命令超时（默认 600） |
+| `pool.done_sweep_hours` / `pool.done_sweep_fails` | 同名大写 | DONE 积压巡检窗/连败降级数 |
+| `rings.<环名>_sec` | `CTRLD_<环名>_SEC` | 控制进程各常驻环周期秒（详见模板） |
+| `tasks.ctrld` / `tasks.boot` / `tasks.fuse` | `CTRLD_TASK_NAME` / `BOOT_TASK_NAME` / `FUSE_TASK_NAME` | 操作系统计划任务名（Windows 侧） |
+| `platform.api_base` | `NIGHT_LEARN_BASE` | 外接平台 API 入口（夜环上报类）。真实部署地址是环境定制项——只写本机 `config.toml`，引擎包内不落真实地址、内置默认=本机形态 |
+
+## 发布边界
+
+发布包只含：`ccards/`、`ops/`、`tests/`、`deploy/`（Linux systemd / macOS launchd 常驻模板）、
+`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`demo.gif` 与保留的第一版
+`demo-docqa.gif`（动画资产与 README 引用逐条对账=判据 `readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
+`CHANGELOG.md`、`CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`（脚本强制 LF——
+Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
+**运行现账一律不出包**：`state/`、`logs/`、`claims/`、`briefs/`、`inbox/`、`registry` 实账、
+`board/` 定制层、`docs/` 运营台账、`config.toml`。
+`ccards/oss_cli.py export --out <dir>`（或 `cc export`）按上述白名单复制，等价一次干净 clone；
+`tests/oss-release-check.py` 对该白名单+敏感面常驻把关，改一行发布集都可能让它红。
+
+## 和现成方案的差异（2026-11 对公开项目实测调研）
+
+| 方案 | 状态存哪 | 怎么并行 | 怎么验收 | 现状/License |
+|---|---|---|---|---|
+| **cc-team** | **明文文件账本+追加式事件日志**，断电不丢、可入 git 评审 | git worktree 泳道 | **机器复跑卡面判据，绿了才 VERIFIED**；账本级僵尸回收与写入围栏（任期制） | 本项目 / MIT |
+| Claude Squad | 本地会话配置，无任务台账 | tmux + worktree | 人审 diff 再 checkout | 活跃 / AGPL-3.0 |
+| Claude Code Agent Teams | 官方文档自认：team 配置**会话结束即删**，/resume 不恢复成员，孤儿会话列于人工排障清单 | 共享任务列表认领 | hooks 槽位（闸门要自己写），实验特性默认关闭 | 专有软件 |
+| Vibe Kanban | 内部 SQLite（不透明） | 看板任务→worktree | 人审 diff/PR | **公司 2026-04 关停**转社区 / Apache-2.0 |
+| container-use | 容器日志+分支，无状态机 | Docker 容器 | 人审分支 | 停滞（release 止于 2025-08）/ Apache-2.0 |
+| Conductor / Copilot agent | 应用/平台侧托管 | worktree / 云沙箱 | 人审后合并 | 闭源商业 / 专有 SaaS |
+| LangGraph / CrewAI / AutoGen | 检查点或状态 JSON（依赖 SQLite/Postgres；社区公开指出 checkpoint≠可恢复执行） | 图节点/流程，非面向代码仓 | 无代码验收闸门概念；AutoGen 已入维护模式 | 框架类 / MIT 等 |
+
+两条结论：
+
+- **验收=机器复跑卡面判据，全表唯一无对等项**——其余方案的收口都是「人看一眼 diff」。
+- **账本完全归用户**——纯明文文件、无厂商账号、本地自主；反例是 Vibe Kanban 公司 2026-04 关停，云端看板被一并移除。
+
+## 附录A：手工命令（主线用不到；观察/调试/无 daemon 直驱时才碰）
+上面「开干」三步全程没有命令行——自举由 CC 自己完成。这里是同一批动作的手工等价物，
+只给需要观察、调试或不装守护的人；`pyproject.toml` 声明控制台入口
+`cc = ccards.oss_cli:main`（pip/pipx 安装后可用；无安装环境时
+`python -I ccards/oss_cli.py` 等价）：
+
+- `cc init --dir <仓根>` —— 生成运行时目录骨架、`config.toml` 默认模板、计划任务/cron 模板、
+  `cards_dag.py` 直达启动器；检测 Claude Code（缺失只给官方安装指引；`--install-agent`
+  才明示后代执行安装）；跑完自检输出 `ALL_PASS`。
+- `cc demo` —— 一次性沙箱全链彩排（零真实账触碰）。
+- `cc selftest [--engine-home <dir>]` —— 跑引擎自带红绿锁套件。
+- `cc export --out <dir>` —— 按发布白名单导出干净发行包。
+
+```bash
+# 引擎自带的红绿锁（全部断言自包含，只写临时沙箱，不碰真实账）
+python -I tests/oss-release-check.py   # 发布自检：敏感清零/白名单边界/默认等价
+bash tests/all.sh                      # 五套机制回归：账本/对抗/回收/判活/CC 环境检测
+
+# 常驻引擎手工起停（正常由 cc init 装好启动器，开机自启，不需要守终端）
+python ops/ctrld.py loop --live                # 派发/回收/合流等环常驻一个进程
+
+# 不开 ctrld 的手工全链路（一张卡从立到验收走一遍，理解状态机用）
+python -I cards_dag.py create REQ-DEMO-1 --title 示例卡 --verify "true" --files "src/"
+python -I cards_dag.py claim REQ-DEMO-1 --owner lane-a
+python -I cards_dag.py progress REQ-DEMO-1 "开工第一拍" --lane lane-a --epoch 1 --ring 1
+python -I cards_dag.py done REQ-DEMO-1 --owner lane-a --commit <hash> --repo <worktree>
+python -I cards_dag.py verdict REQ-DEMO-1 PASS --as Verifier
+```
+
+接入终端 agent（自动派单两件套，`cc init` 均生成模板）：
+- 起会话命令 = 配置项 `engine.runner_cmd`：一个「把提示词喂给终端 agent」的包装脚本样例，
+  改成你环境里的真实命令即可（`--lanes` 名册 + 本键 = 派单器知道往哪道起谁）；
+- 会话结束自动结账 = 在你的 agent 的 Stop/退出钩子里调 `ops/check_exit.py`（按会话身份
+  安全结算，防串卡）。
+
+## 附录B：状态=属主与迁移矩阵（同源机器读区，#80 锁逐行对账）
 > 下面四张标记表（`STATE-OWNER / STATE-TERMS / STATE-MATRIX / STATE-FIELDS`）是**机器契约**：
 > `tests/state_std_test.py` 按标记切表，与唯一数据源 `ccards/statemachine.py`
 > （TERMS / OWNER_MATRIX / TRANSITIONS / REQUIRED_FIELDS）逐行比对——改代码数据必须同批改表，
@@ -210,96 +300,6 @@ cc-team/
 | VERIFIED | verdict | 机器复跑痕 verify_run 由 VFY1 起新卡必带 |
 | CANCELED | — | cancel 清 claimed_at，落终态 |
 <!-- STATE-FIELDS-END -->
-
-## 配置（一切定制走配置，默认值=引擎出厂行为）
-
-优先级：**环境变量 > `config.toml` 文件层 > 内置默认**。文件层发现顺序：
-`CC_CONFIG` 指向的文件 > 账本根（`CC_TEAM_HOME`）下的 `config.toml`。
-未识别的键只告警不报错（旧版引擎吃新版配置不炸）。
-
-内置默认全部**由仓位置/宿主环境派生**，不含任何机器名、用户名、盘符字面量——
-换机器/换用户/换操作系统目录布局，不改一行代码。
-
-常用键（`cc init` 生成的模板里有全量注释）：
-
-| 键 | 环境变量锚 | 含义 |
-|---|---|---|
-| `host.fleet_root` / `host.user_home` / `host.sessions_dir` / `host.win_root` | `CC_HOME` / `CC_USER` / `CC_PROJ` | 车队根、宿主用户主目录、终端 agent 会话转录目录、Windows 挂载根探测 |
-| `fleet.code_root` | `CC_CODE`、`DISPATCH_CODE_ROOT` | 泳道 worktree（`wf-<道>`）所在根 |
-| `engine.runner_cmd` | `CC_RUNNER` | 起一次终端 agent 会话的包装命令 |
-| `engine.powershell` | `DISPATCH_PS` | Windows 侧解释器（跨 WSL 场景） |
-| `dispatch.lane_cap` | `DISPATCH_CAP` | 同时在飞泳道上限（默认 6） |
-| `dispatch.heartbeat_path` | `DISPATCH_HB` | 派发器心跳文件 |
-| `dispatch.bind_wait_s` / `dispatch.dead_grace_s` | `DISPATCH_BIND_WAIT` / `DISPATCH_DEAD_GRACE_S` | 起班后找会话锚的有界等待 / 尸检宽限 |
-| `dispatch.redauto_every` | `DISPATCH_REDAUTO_EVERY` | 红检自动化每 N 圈跑一次（默认 10） |
-| `thresholds.beat_stale_min` | `CARD_STALE_MIN` | 心跳过期判死分钟（默认 15） |
-| `thresholds.silence_release_min` | `CARD_SILENCE_RELEASE_MIN` | 在制断流探针阈值分钟（默认 45） |
-| `engine.verify_timeout_s` | `CARD_VERIFY_TIMEOUT` | 验收命令超时（默认 600） |
-| `pool.done_sweep_hours` / `pool.done_sweep_fails` | 同名大写 | DONE 积压巡检窗/连败降级数 |
-| `rings.<环名>_sec` | `CTRLD_<环名>_SEC` | 控制进程各常驻环周期秒（详见模板） |
-| `tasks.ctrld` / `tasks.boot` / `tasks.fuse` | `CTRLD_TASK_NAME` / `BOOT_TASK_NAME` / `FUSE_TASK_NAME` | 操作系统计划任务名（Windows 侧） |
-| `platform.api_base` | `NIGHT_LEARN_BASE` | 外接平台 API 入口（夜环上报类）。真实部署地址是环境定制项——只写本机 `config.toml`，引擎包内不落真实地址、内置默认=本机形态 |
-
-## ops/ 常驻环一览（全部单进程时间轮，或由系统定时器触发一次后常驻）
-
-- `dispatch.py` —— 派单器：按名册找空闲泳道，取队首可领卡，起 worker 会话并绑锚。
-- `ctrld.py` —— 控制进程：一个进程内跑所有周期环（派发/回收/红检/看门/合流…），周期可配。
-- `recycle.py` —— 回收器：心跳断流、认领未起班、DONE 积压三类场景的自动 release/巡检。
-- `check_exit.py` —— agent 会话退出钩子：按会话身份安全结账（防串卡）。
-- `fuse.py` —— 交卷未合流看护：到点自动把泳道提交并进主干（干跑净才动）。
-- `inbox_watchdog.py` —— 信箱/事件看门：账本事件与外部消息通道的滞留告警。
-- `lane_registry.py` —— 泳道名册与垃圾会话目录清理（白名单三源并集，宁漏不误删）。
-
-`tests/` 为每个环节配红绿锁：`all.sh` 汇总跑五套（账本/对抗/回收守卫/判活/CC 环境检测），
-`oss-release-check.py` 是发布包自身的常驻锁（敏感清零/白名单边界/默认等价三段）。
-
-## 发布边界
-
-发布包只含：`ccards/`、`ops/`、`tests/`、`deploy/`（Linux systemd / macOS launchd 常驻模板）、
-`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`demo.gif` 与保留的第一版
-`demo-docqa.gif`（动画资产与 README 引用逐条对账=判据 `readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
-`CHANGELOG.md`、`CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`（脚本强制 LF——
-Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
-**运行现账一律不出包**：`state/`、`logs/`、`claims/`、`briefs/`、`inbox/`、`registry` 实账、
-`board/` 定制层、`docs/` 运营台账、`config.toml`。
-`ccards/oss_cli.py export --out <dir>`（或 `cc export`）按上述白名单复制，等价一次干净 clone；
-`tests/oss-release-check.py` 对该白名单+敏感面常驻把关，改一行发布集都可能让它红。
-
-## 附录：手工命令（主线用不到；观察/调试/无 daemon 直驱时才碰）
-
-上面「开干」三步全程没有命令行——自举由 CC 自己完成。这里是同一批动作的手工等价物，
-只给需要观察、调试或不装守护的人；`pyproject.toml` 声明控制台入口
-`cc = ccards.oss_cli:main`（pip/pipx 安装后可用；无安装环境时
-`python -I ccards/oss_cli.py` 等价）：
-
-- `cc init --dir <仓根>` —— 生成运行时目录骨架、`config.toml` 默认模板、计划任务/cron 模板、
-  `cards_dag.py` 直达启动器；检测 Claude Code（缺失只给官方安装指引；`--install-agent`
-  才明示后代执行安装）；跑完自检输出 `ALL_PASS`。
-- `cc demo` —— 一次性沙箱全链彩排（零真实账触碰）。
-- `cc selftest [--engine-home <dir>]` —— 跑引擎自带红绿锁套件。
-- `cc export --out <dir>` —— 按发布白名单导出干净发行包。
-
-```bash
-# 引擎自带的红绿锁（全部断言自包含，只写临时沙箱，不碰真实账）
-python -I tests/oss-release-check.py   # 发布自检：敏感清零/白名单边界/默认等价
-bash tests/all.sh                      # 五套机制回归：账本/对抗/回收/判活/CC 环境检测
-
-# 常驻引擎手工起停（正常由 cc init 装好启动器，开机自启，不需要守终端）
-python ops/ctrld.py loop --live                # 派发/回收/合流等环常驻一个进程
-
-# 不开 ctrld 的手工全链路（一张卡从立到验收走一遍，理解状态机用）
-python -I cards_dag.py create REQ-DEMO-1 --title 示例卡 --verify "true" --files "src/"
-python -I cards_dag.py claim REQ-DEMO-1 --owner lane-a
-python -I cards_dag.py progress REQ-DEMO-1 "开工第一拍" --lane lane-a --epoch 1 --ring 1
-python -I cards_dag.py done REQ-DEMO-1 --owner lane-a --commit <hash> --repo <worktree>
-python -I cards_dag.py verdict REQ-DEMO-1 PASS --as Verifier
-```
-
-接入终端 agent（自动派单两件套，`cc init` 均生成模板）：
-- 起会话命令 = 配置项 `engine.runner_cmd`：一个「把提示词喂给终端 agent」的包装脚本样例，
-  改成你环境里的真实命令即可（`--lanes` 名册 + 本键 = 派单器知道往哪道起谁）；
-- 会话结束自动结账 = 在你的 agent 的 Stop/退出钩子里调 `ops/check_exit.py`（按会话身份
-  安全结算，防串卡）。
 
 ## 许可
 

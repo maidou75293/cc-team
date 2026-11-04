@@ -9,6 +9,10 @@
 #      演示」「第一个动画也保留」）：T2c 桶单加 mockup（产品图实拍帧≥1，无头浏览器对交付件
 #      真渲染，不许口头）；新增 T2d 给保留的第一版动画 demo-docqa.gif 立案（存在/魔数/帧数/
 #      体积/SCENES 六桶+board=0/TOTAL 对账）——「保留」也得上锁，删了会红。
+# R7 按 00:5x 打回落新锁（业主原话「是不是应该把架构图放在readme，里面太啰嗦了，结构也乱」）：
+#      T9a 主线（附录前）必须有一个 mermaid 架构图块，且五个节点词（账本/常驻/泳道/复跑/主干）
+#      全在块内点名——图不许是装饰，必须画出本引擎的真构件；
+#      T9b 篇幅闸门：主线行数≤200（结构重组后实测基线附近），再写胖=红——「啰嗦」不许复发。
 #   T1 头引图：全文第一个被引用的图片必须是 demo.gif，且位于第一个二级标题之前（置顶）；
 #   T2 动画本体：demo.gif 存在、魔数 GIF89a、帧数≥10、体积<8MB（业主 11-04 22:1x 打回补画面后
 #      放宽上限；重录变大/退化仍即红）；
@@ -26,6 +30,7 @@
 #   T5 语气闸门：剥除图片与链接语法后，正文第一个含中文段落不得出现感叹号（专业，不叫卖）；
 #   T6 机器表不漂移：README 四张 STATE-* 标记表与 ccards/statemachine.py 逐行同源
 #      （与 state_std_test S2 同判据——头部怎么改，机器契约区必须原样在位）；
+#   T9 架构图与篇幅（R7 新规格）：主线有 mermaid 图块且构件点名、主线行数≤200；
 #   T7 导出面同源（11-04 死图事故补锁）：README 引用的每个本地图片资产必须同时在发布
 #      清单内（oss_cli.RELEASE_FILES 点名 或 RELEASE_DIRS 目录覆盖）——判据全绿≠公仓有图，
 #      export 根文件按清单点名，漏一行=公仓首页 404 死图（demo.gif 实踩）。
@@ -396,8 +401,30 @@ def t8():
             bad(name, "主线未见 /%s/" % pat)
 
 
+# ─────────────── T9 架构图在场+构件点名 / 主线篇幅闸门（R7） ───────────────
+def t9():
+    txt = readme_text()
+    m = re.search(r"^#{1,6}[ \t]*附录", txt, re.M)
+    main = txt[:m.start()] if m else txt
+    mm = re.search(r"^```mermaid\b(.*?)^```", main, re.M | re.S)
+    if not mm:
+        bad("T9a 架构图", "主线（附录前）无 mermaid 图块——业主 00:5x：架构图必须进 README 主线")
+    else:
+        block = mm.group(1)
+        miss = [w for w in ("账本", "常驻", "泳道", "复跑", "主干") if w not in block]
+        if miss:
+            bad("T9a 架构图", "图块未点名构件 %s——图必须画真构件，装饰画不算" % ",".join(miss))
+        else:
+            ok("T9a 主线架构图在场（mermaid·账本/常驻/泳道/复跑/主干 五构件点名）")
+    n_main = len(main.splitlines())
+    if n_main <= 200:
+        ok("T9b 主线行数=%d（≤200=R7 瘦身闸门，再写胖即红）" % n_main)
+    else:
+        bad("T9b 主线篇幅", "主线 %d 行>200——业主 00:5x「太啰嗦」的复发信号" % n_main)
+
+
 if __name__ == "__main__":
-    for fn in (t1, t2, t2c, t2d, t3, t4, t5, t6, t7, t8):
+    for fn in (t1, t2, t2c, t2d, t3, t4, t5, t6, t7, t8, t9):
         try:
             fn()
         except Exception as e:                               # 判据自身异常=红，不许静默

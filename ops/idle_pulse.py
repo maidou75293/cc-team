@@ -8,7 +8,9 @@
   系统「活性」= 三源里最新一次落笔时刻——①台账流水 events.log ②各会话转录 *.jsonl
   ③在岗心跳 lane-*.beat / claims 目录 mtime。三源 max 龄 > 300s = 零消耗 = 停摆。
   归因只写卡面 note 供 PM 判（不自动处置）：ready>0 而无人干活=派发/启动断；
-  ready==0 且 claimed==0=供料枯竭（该发新卡了）。
+  ready==0 且 claimed==0=供料枯竭（该发新卡了）；在制全为常驻岗自执卡（kind≠lane，
+  判定单点=ops/dispatch.claim_is_selfexec，与 dispatch/recycle 同一入口）=结构性静默，
+  不归因派发断（BUG-BIND-PMCLAIM-EXEMPT-1③）。
 
 动作（幂等）：立/续 SYS-FLOWSTOP-<YYYYMMDD> 卡（每日一张，重复停摆走 note+count 不双卡），
 alerts 记 ALARM SYS-FLOWSTOP（同键聚合）；**恢复即自绿**——卡判据=「此刻活性<300s」
@@ -65,13 +67,46 @@ def activity_age(projects_root, team_home):
 
 
 def ledger_counts():
-    """(ready, claimed)——engine 只读快照，供归因；炸了=(-1,-1) 只喊不拦。"""
+    """(ready, claimed, selfexec)——engine 只读快照，供归因；炸了=(-1,-1,-1) 只喊不拦。
+    selfexec=在制 CLAIMED 里常驻岗自执卡数（判定单点=ops/dispatch 的 claim_is_selfexec，与
+    dispatch 连拍账/recycle 回收探针同源——BUG-BIND-PMCLAIM-EXEMPT-1③：停摆归因要分得开
+    「派发断」与「岗自执结构性静默」：岗不经 dispatch 起班、天生零派发会话，别把岗的安静
+    归因成启动链断了）。缺 claim.json 按 default=lane 保守计入派发族（不豁免）。"""
     try:
         from ccards import engine
+        from ccards import config as _c
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)             # ops 兄弟件通道（recycle 载 memgate/pool 同法）
+        from dispatch import claim_is_selfexec   # 判定单点=ops/dispatch（卡面 files 域内，见其定义块注释）
         t = engine.tick()
-        return len(t.get("ready") or []), len(t.get("claimed") or {})
+        claimed = t.get("claimed") or {}
+        n_self = 0
+        for cid in claimed:
+            try:
+                d = _c.read_json(os.path.join(_c.CLAIMS, cid, "claim.json")) or {}
+            except OSError:
+                d = {}
+            if claim_is_selfexec(d):
+                n_self += 1
+        return len(t.get("ready") or []), len(claimed), n_self
     except Exception:
-        return -1, -1
+        return -1, -1, -1
+
+
+def stall_attribution(ready, claimed, selfexec=0):
+    """停摆归因（纯判定函数，可单测自证；口径与旧散点等价，仅新增自执形一支）。
+    BUG-BIND-PMCLAIM-EXEMPT-1③：有在制且**全部**是常驻岗自执卡=结构性静默——归因点名
+    「岗无派发转录」不再错指「派发/启动断」；ready 优先面不变（ready 积压仍归派发链）。"""
+    if ready == 0 and claimed == 0:
+        return "供料枯竭（ready=0 且 claimed=0，该发新卡）"
+    if ready > 0:
+        return "派发/启动断（账上有料却无活性）"
+    if claimed > 0:
+        if 0 < selfexec >= claimed:
+            return ("在岗断流（在制 %d 张全是常驻岗自执卡=结构性静默：不经 dispatch 起班、"
+                    "天生零派发转录——先查岗名牌续写/三源账，别归因派发链）" % claimed)
+        return "在岗断流（有在制无活性）"
+    return "活性三源皆空（账本/转录/心跳都读不到）"
 
 
 def card_id():
@@ -114,16 +149,13 @@ def main(argv=None):
         print("IDLEPULSE-LIVE age=%.0fs 阈=%d" % (age, STALL_S))
         return 0 if age < STALL_S else 1
 
-    ready, claimed = ledger_counts()
+    ready, claimed, selfexec = ledger_counts()
     ts = time.strftime("%F %T")
     if age < STALL_S:
-        print("%s idlepulse: 活性 %.0fs<%d 正常 ready=%s claimed=%s"
-              % (ts, age, STALL_S, ready, claimed))
+        print("%s idlepulse: 活性 %.0fs<%d 正常 ready=%s claimed=%s selfexec=%s"
+              % (ts, age, STALL_S, ready, claimed, selfexec))
         return 0
-    why = ("供料枯竭（ready=0 且 claimed=0，该发新卡）" if ready == 0 and claimed == 0
-           else "派发/启动断（账上有料却无活性）" if ready > 0
-           else "在岗断流（有在制无活性）" if claimed > 0
-           else "活性三源皆空（账本/转录/心跳都读不到）")
+    why = stall_attribution(ready, claimed, selfexec)
     cid = card_id()
     title = "产线停摆：≥%d 分钟零消耗（系统哨自动立案）" % (STALL_S // 60)
     desc = ("idle_pulse 哨发现台账流水/会话转录/在岗心跳三源 %ds 无任何落笔。"

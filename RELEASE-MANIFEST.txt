@@ -68,6 +68,7 @@ tests/ctrld-ringstall-test.py
 tests/dispatch-lanebinding-test.py
 tests/done-anchor-tip-check.py
 tests/fuse-check.py
+tests/fuse-tipscan-test.py
 tests/gate-bashn-check.py
 tests/gbk-decode-check.py
 tests/gbk-proj-check.py

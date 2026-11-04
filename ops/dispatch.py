@@ -102,6 +102,38 @@ _redauto_cur = 0     # 轮转游标：重启归零最坏=重看一张旧卡，�
 #   会话不起/不干=卡留 CLAIMED，由 recycle cron 超时回收重派。
 
 
+# ---------- BUG-BIND-PMCLAIM-EXEMPT-1：常驻岗/自执卡豁免判定 · 单入口 ----------
+# 病灶（2026-11-04 22:46 实锤：REQ-OSS-README-UX-1@pm-mailbox claim 后 22:51 起
+# ALARM BIND-MISS 连拍、23:21 喂 S6 唤班；同期 recycle 侧 session 铃 x12 同根）：
+# 常驻岗自执卡不经 dispatch 起班，会话转录里永没有「# 卡 <cid>」+「你是泳道 <lane>」
+# 双锚开场行（那对锚只存在于 compose_brief 派单简报），discover_session 结构上永不
+# 绑上——旧形连拍账无 kind 闸，岗持卡连拍到阈=必响虚警并喂升级环。
+# 豁免口径=claim 落盘的 kind（cmd_claim/cmd_start/cmd_bind 认领当刻写入，结构事实）：
+#   kind="lane"=派发型起班（必有简报转录，无转录=升级合理，豁免不得染指）；
+#   kind≠lane（session/未来新档）=自执卡（不进连拍账、不按「无转录」判死）。
+# 禁按岗名豁免——pm/pm-mailbox/pmmail/pm-live/ops 别名六形实锤（health_report.META_LANES），
+# 名册会漂移，claim 自身的 kind 才是可依赖的结构事实；也不散点硬编码判定——
+# 本文件连拍账/半成核对/签收核对/尸检/unbind 四处，加上 recycle 回收探针、
+# idle_pulse 停摆归因（两侧均函数内 from dispatch import，与 memgate/pool 兄弟件
+# 同法），一律调本函数。缺 kind 的存量按各调用方既有口径传 default（派发侧 lane=
+# 保守进账，recycle 无锚侧 session=保守不回收——默认值不同但判定同源单点）。
+# 为何不落在卡面 plan 建议的 ccards/config：本卡 files 域只声明 ops/tests 四件，
+# done 越域闸对域外文件机械拒勾（账上先例=PM 给同族机制卡声明 cc-team/ccards/ 目录），
+# 单入口随域落 ops/dispatch.py——判定单点、零岗名硬编码的规格本体不变（交卷注明）。
+KIND_LANE = "lane"
+
+
+def claim_is_selfexec(*sources, default=KIND_LANE):
+    """多源认领 kind 判定：按优先级传 dict（如 lane meta、claim.json），取第一非空 kind。
+    True=自执/常驻岗卡（豁免 BIND-MISS 连拍账与「无转录」判死）；False=派发型 lane 认领。
+    全源无 kind=default（存量残渣口径，见上注释块）；None/空 dict 安全。"""
+    for d in sources:
+        k = str((d or {}).get("kind") or "").strip()
+        if k:
+            return k != KIND_LANE
+    return default != KIND_LANE
+
+
 def trace(m):
     print("%s %s" % (time.strftime("%F %T"), m), flush=True)
 
@@ -249,12 +281,19 @@ def _bind_streak_save(d):
 def backfill_binds(claimed):
     """每拍补绑：在制 CLAIMED 卡里 session_id 仍 "-" 的，各做一次只读探测。claimed={卡:道}。
     + BUG-BIND-DEADPATH-1 连拍账：连续无转录可绑到阈=ALARM BIND-MISS（见上注释块）。
+    + BUG-BIND-PMCLAIM-EXEMPT-1① 自执豁免：常驻岗/手工认领（本文件顶层
+      claim_is_selfexec=claim kind≠lane）不经 dispatch 起班、简报双锚转录结构性
+      不存在=永不绑上——旧形照进连拍账，pm-mailbox 持卡连拍到阈必响虚警喂 S6
+      （2026-11-04 22:51 实锤）。豁免卡不进连拍账、不出 BIND-MISS（清残留连拍后
+      跳整卡）；判定单点=本文件定义块（与 claim_is_selfexec 处注释同源口径），
+      recycle/idle_pulse 函数内 import 同一入口，禁散点岗名。派单 lane 卡不受波及（差分对锁）。
     + BUG-BIND-CONFIRMRETRY-1 半成自愈：session_id 已绑≠签收已落——cmd_bind 先写 claim.json
       成迹、后 graph save 撞 WinError 5 rename 窗崩=「签而不收」：锚在 claim、卡面无 confirm 痕。
       旧跳检只认 session_id 在场即 continue=永不重试签名，SOP-MISS 铃每拍续记直到 PM 人工补签
       （2026-11-04 夜实锤 TEST-E2E-PREPUSH-1，alerts count 37）。现于跳检前加一道卡面 confirm
-      缺位核对（整拍懒拿一次 cards 快照，勿逐卡重复 IO）：kind=lane 且卡面 CLAIMED 且无 confirm
-      → 幂等重 bind_gate（cmd_bind 对同 (lane,epoch) 已签幂等不刷 CONFIRM 流水、对三件缺一只
+      缺位核对（整拍懒拿一次 cards 快照，勿逐卡重复 IO）：卡面 CLAIMED 且无 confirm
+      （kind 族由上游 BIND-EXEMPT 单点闸保证=派发型才走到这）→ 幂等重 bind_gate
+      （cmd_bind 对同 (lane,epoch) 已签幂等不刷 CONFIRM 流水、对三件缺一只
       WARN 不落痕），trace 落 HALF-BIND-RETRY 痕供夜审；补成后 sweep_confirm_miss 见签收在场
       自然退账=铃停。rename 撞窗根因留观测（本卡只补重试面，禁动 config 原子写核心）。"""
     streak = _bind_streak_load()
@@ -263,13 +302,16 @@ def backfill_binds(claimed):
     for cid, lane in sorted((claimed or {}).items()):
         try:
             d = _cfg.read_json(os.path.join(_cfg.CLAIMS, cid, "claim.json")) or {}
+            if claim_is_selfexec(d):      # BIND-EXEMPT 自执/常驻岗卡：结构性无转录，不进连拍账不出铃
+                streak.pop(cid, None)          # 重派换班前若曾入账=清掉，防旧形残留误升级
+                continue
             sid = str(d.get("session_id") or "-")
             if sid != "-":
                 streak.pop(cid, None)          # 已有锚=清账（防旧连拍残留误升级）
                 if cards is None:
                     cards = (_cfg.read_json(_cfg.GRAPH) or {}).get("cards") or {}
                 c = cards.get(cid) or {}
-                if str(d.get("kind") or "lane") == "lane" and c.get("status") == "CLAIMED" and not c.get("confirm"):
+                if c.get("status") == "CLAIMED" and not c.get("confirm"):
                     trace("HALF-BIND-RETRY %s@%s：claim 已绑 session=%s 而卡面无 confirm 痕"
                           "（bind 半成=claim 成迹后 graph save 崩窗）→ 幂等重 bind 补签" % (cid, lane, sid))
                     bind_gate(cid, sid)
@@ -355,8 +397,8 @@ def sweep_confirm_miss(claimed):
             if c.get("status") != "CLAIMED":
                 continue
             d = _cfg.read_json(os.path.join(_cfg.CLAIMS, cid, "claim.json")) or {}
-            if str(d.get("kind") or "lane") != "lane":
-                continue                         # PM 直做卡无 dispatcher 签收通道=不判
+            if claim_is_selfexec(d):        # PM 直做卡无 dispatcher 签收通道=不判（口径单点=本文件 claim_is_selfexec 定义块）
+                continue
             age = _sop_age_min(c.get("claimed_at"))
             if age is None or age < SOP_CONFIRM_TIMEOUT_MIN:
                 continue                         # 没法计时/未超阈=不判
@@ -732,8 +774,8 @@ def spawn_death_watch(inflight):
         try:
             d = _cfg.read_json(os.path.join(_cfg.CLAIMS, cid, "claim.json")) or {}
             pid = d.get("pid")                 # 仅留档（trace 里可查），不参与判定
-            if str(d.get("kind") or "lane") != "lane" or pid is None:
-                continue                       # 手工/session 档不归名字尸检，归 recycle 保守面
+            if claim_is_selfexec(d) or pid is None:
+                continue                       # 手工/session 档不归名字尸检，归 recycle 保守面（口径单点=本文件 claim_is_selfexec 定义块）
             try:
                 t0 = datetime.datetime.strptime(str(d.get("ts") or ""),
                                                 "%Y-%m-%dT%H:%M:%S%z").timestamp()
@@ -845,7 +887,7 @@ def unbind_watch(inflight):
     for cid, lane in sorted((inflight or {}).items()):
         try:
             d = _cfg.read_json(os.path.join(_cfg.CLAIMS, cid, "claim.json")) or {}
-            if str(d.get("kind") or "lane") != "lane":
+            if claim_is_selfexec(d):        # 手工/session 卡无 runner 锚、天生不绑（口径单点=本文件 claim_is_selfexec 定义块）
                 continue
             if str(d.get("session_id") or "-") != "-":
                 continue                         # 已绑=有锚，在制不打扰

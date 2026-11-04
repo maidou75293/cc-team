@@ -21,6 +21,9 @@
 #   kind=session：PM/子会话执行卡（start 落的 kind=session，或无锁无 kind 的存量残渣——R3 事故定版：
 #                 写入口命令自记 pid 必死，拿它判活=必误杀）→ 一律只 WARN 不 release；
 #                 连续两轮同卡 WARN 升 ALARM（state/recycle-warn.json，仅 --apply 轮更新），PM 经 inbox 处置。
+#                 判定单点=ops/dispatch.claim_is_selfexec（BUG-BIND-PMCLAIM-EXEMPT-1③ 口径收口，
+#                 函数内 import 与 dispatch 连拍账/idle_pulse 归因同一入口；判死面与铃语义零改动，
+#                 散点内联 kind 判定已并轨）。
 # 报警范围（BUG-REAPER-SCOPE-1，属主表 seq4 同源）：看护报警只认 CLAIMED——升 ALARM 前现读
 #   卡状态复核（离制即不入账，SCOPE-SKIP），每圈再扫一遍开放警账：看护格式「ALARM <cid>: …」
 #   涉及卡已非 CLAIMED（DONE/VERIFIED/CANCELED/无卡）= 僵尸警 → autoack 清账（留痕不删行，
@@ -1439,14 +1442,22 @@ def main():
         lock_cid, meta, lockdir = load_lane_lock(owner)
         claim = load_claim(cid)
         cdir = os.path.join(CLAIMS, cid)
+        # BUG-BIND-PMCLAIM-EXEMPT-1③ 口径收口（判定零改道，散点并单点）：自执档判定=
+        # ops/dispatch 的 claim_is_selfexec（下方函数内 import），与连拍账/半成/签收/
+        # 尸检/unbind、idle_pulse 归因同一入口——memgate/pool 同法（兄弟件函数内载）。
+        # 缺 kind 的存量默认随两侧既有 R3 口径逐字等价（有道锁镜像=缺省按 lane 保守进看护；
+        # 无镜像=缺省按 session 保守不回收）。判死面语义不变：自执档不进探针/detach、永不
+        # release——「无转录/静默」从不给它判死（红绿锁用例钉死，见 tests/bind-miss-streak-test.py）；
+        # 已知 kind 值域只有 lane/session（claim/start/bind 三写手），未知 kind 归自执档=更保守向。
+        from dispatch import claim_is_selfexec      # 判定单点=ops/dispatch（卡面 files 域内；见上注释）
         if os.path.isdir(lockdir):
-            kind = meta.get("kind") or claim.get("kind") or "lane"
+            selfexec = claim_is_selfexec(meta, claim, default="lane")
             # 静默=心跳文件(道锁或卡锁任一侧)与 claims 目录 mtime 的较新者（过渡档锚）
             sil = min(heartbeat_min(lockdir), heartbeat_min(cdir), silence_min(cdir))
         else:
-            kind = claim.get("kind") or "session"  # 无锁锚：R3 定版=会话卡，保守不回收
+            selfexec = claim_is_selfexec(claim, default="session")  # 无锁锚：R3 定版=会话卡，保守不回收
             sil = silence_min(cdir)
-        if kind == "session":
+        if selfexec:
             warn(cid, "owner=%s session 执行卡(无回收锚) 静默%smin"
                  % (owner, ("%.0f" % sil) if sil != float("inf") else "∞"),
                  alarm="owner=%s session 执行卡(无回收锚) 静默超阈" % owner)  # 键去分钟值，同题聚合(OPT1)
