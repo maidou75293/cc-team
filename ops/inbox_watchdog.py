@@ -27,6 +27,12 @@
 #     照抄 2min=误拆活锁造双开，比本 BUG 更糟——故无证据一律从严、有死锚才快拆）；
 #     其余（锚活/新鲜/读不出/探测异常）保守判在飞，绝不误拆活锁。判活全仓归口 ccards.config.pid_alive
 #     （BUG-FUSE-SELFKILL-1：Windows os.kill(pid,0)=CTRL_C 广播处决，禁用）。
+#   ⑤ 普查补闸（BUG-INBOX-DOUBLEPULL-1，业主 11-04 20:3x「CC 并没有闲置就释放资源，还有十几个」
+#     实锤）：run-cc.ps1 的 pmmail 锁无活 pid 证据，30min 病残窗到点必清 →「上一班进程还活着、
+#     锁已没了」→ 下圈照拉，现网 19:14/19:45/20:15 三连叠班。锁只能证「有过班」，进程普查才证
+#     「现在有班」——lane_inflight 放行后再过 session_census()（认 CCLANE=pmmail- 进程形，族=
+#     recycle._ghost_session_pids），真会话在场=照拦不叠拉；普查不可查(None)=维持旧形放行不饿死
+#     信箱。≥2 叠班只点名不代杀（清旧归回收岗）。测试缝 INBOX_WATCH_SESSION_CMD 仅沙箱设。
 # 行为面：数 OWNER-INBOX.md 标题行（^## seq=）不含 [acked] 的条数 N；N=0 静默复位（清锚，
 #   下封来信即刻可拉）；N>0 经既有 run-cc.ps1（起会话核路径=config.CC_RUNNER 单入口，宿主随配置，
 #   与 ops/dispatch.py 同源复用、不改它）拉起 PM 会话，prompt=「你是ccPM，执行一轮正式开工：
@@ -313,6 +319,49 @@ def lane_inflight(lock_path, now=None):
     return False, "LOCK-REAP %s 残锁已清放行" % how
 
 
+def session_census():
+    """pmmail 真会话普查（BUG-INBOX-DOUBLEPULL-1 补闸，业主 11-04 20:3x「CC 不干活该释放资源」
+    实锤三连叠班：锁无 pid 证据到 30min 病残窗即清，但班次进程仍活着 → 下圈照拉 → 叠班）。
+    锁只能证「有过班」，普查才证「现在有班」——认人不认牌，族形=recycle._ghost_session_pids
+    同口径（claude.exe CommandLine 含 CCLANE=pmmail-）。只读不改进程：≥2 叠班只点名拦截，
+    不代杀（杀旧保新属回收岗职责面，另行处置）。
+    测试缝 INBOX_WATCH_SESSION_CMD（%L%=道名，stdout 每行一 pid）仅沙箱设、生产不设。
+    返回：pid 表（可空）=实查；None=不可查（非 Windows / 查询失败 / 无缝且平台不支持）
+    ——调用侧把 None 当「不拦」维持旧锁形行为：饿死信箱比多拉一班贵（纪律①原文口径）。"""
+    seam = (os.environ.get("INBOX_WATCH_SESSION_CMD") or "").strip()
+    try:
+        if seam:
+            r = subprocess.run(seam.replace("%L%", LANE), shell=True, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=25, creationflags=NO_WIN)
+        elif os.name == "nt":
+            ps = ("(Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\") | "
+                  "Where-Object { $_.CommandLine -match 'CCLANE=%s-' } | "
+                  "ForEach-Object { $_.ProcessId }" % LANE)
+            r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=30, creationflags=NO_WIN)
+        else:
+            return None
+        if r.returncode != 0:
+            return None
+        return [int(x.strip()) for x in (r.stdout or "").splitlines() if x.strip().isdigit()]
+    except Exception:
+        return None
+
+
+def inflight_gate(lock_path, now=None):
+    """防双开合成闸=锁形判据 ∨ 进程普查。锁放行的下一关=真会话在场照拦（SESSION-ALIVE）；
+    普查不可查(None)=按旧形放行（保守=放行拉，不饿死信箱）。"""
+    inflight, note = lane_inflight(lock_path, now)
+    if not inflight:
+        pids = session_census()
+        if pids:
+            extra = "（≥2=叠班旧账在场：只拦新拉不代杀，清旧归回收岗）" if len(pids) >= 2 else ""
+            inflight, note = True, "SESSION-ALIVE 普查在飞会话=%d%s" % (len(pids), extra)
+    return inflight, note
+
+
 def apply_round(inbox_path, state_path, now=None, lock_path=None):
     """--apply 一圈。返回退出码。now/lock_path 供 selftest/沙箱注入，实跑取真实值。"""
     seqs, err = read_unacked(inbox_path)
@@ -331,7 +380,7 @@ def apply_round(inbox_path, state_path, now=None, lock_path=None):
         else:
             now = time.time()
     st = load_state(state_path)
-    inflight, note = lane_inflight(lock_path or LANE_LOCK_WIN, now)
+    inflight, note = inflight_gate(lock_path or LANE_LOCK_WIN, now)
     try:  # 静默度=距信箱文件最后写入的秒数（seq=17 合并缓冲的输入；读不出=None=放行拉起侧）
         idle = max(0.0, now - os.path.getmtime(inbox_path))
     except OSError:
@@ -514,6 +563,20 @@ def selftest():
         os.utime(lk2, (t0 - 1900, t0 - 1900))
         infl, note = lane_inflight(lk2, t0)
         chk("文件形无pid证据超病残窗=清放行", infl is False and not os.path.exists(lk2))
+        # ---- 普查补闸（纪律⑤：锁放行≠真无班——真会话在场照拦，叠班只点名不代杀）----
+        os.environ["INBOX_WATCH_SESSION_CMD"] = "echo 4242"
+        inf5, note5 = inflight_gate(os.path.join(d, "no-such.lock"), t0)
+        chk("锁不在场但普查有班=SESSION-ALIVE 拦叠拉", inf5 is True and "SESSION-ALIVE" in note5)
+        os.environ["INBOX_WATCH_SESSION_CMD"] = "echo 4242 && echo 4243"
+        inf6, note6 = inflight_gate(os.path.join(d, "no-such.lock"), t0)
+        chk("叠班≥2=点名（只拦新拉不代杀）", inf6 is True and "叠班" in note6)
+        os.environ["INBOX_WATCH_SESSION_CMD"] = "echo"
+        inf7, _ = inflight_gate(os.path.join(d, "no-such.lock"), t0)
+        chk("普查空表=按旧形放行（锁净+无班才真放行）", inf7 is False)
+        os.environ.pop("INBOX_WATCH_SESSION_CMD", None)
+        r5 = session_census()
+        chk("无缝形=可查(list)或不可查(None)，绝不抛", isinstance(r5, (list, type(None))))
+        # 撤闸自证面：若删 inflight_gate 的普查分支，上面 4242 款必红（非空检查；族=guard 必红纪律）
         # ---- SIM_LAUNCH 测试缝：LAUNCH 不真起 powershell ----
         os.environ["INBOX_WATCH_SIM_LAUNCH"] = "1"
         fn, lerr = launch()
@@ -528,7 +591,9 @@ def selftest():
         env_bak = dict(os.environ)
         state_bak = _cfg.STATE
         _cfg.STATE = d   # 红灯账改道沙箱：链⑥的 alerts.record 绝不许写现网 state/alerts.json
-        os.environ.update({"INBOX_WATCH_SIM_LAUNCH": "1", "INBOX_WATCH_QUIET_MIN": "0"})
+        os.environ.update({"INBOX_WATCH_SIM_LAUNCH": "1", "INBOX_WATCH_QUIET_MIN": "0",
+                       # 全链回放钉定=普查空表（防 Windows 现网活班把 LAUNCH 拦成 SESSION-ALIVE 飘红）
+                       "INBOX_WATCH_SESSION_CMD": "echo"})
         import io as _io
         import contextlib as _cl
 
