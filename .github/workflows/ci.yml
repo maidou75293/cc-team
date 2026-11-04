@@ -36,3 +36,29 @@ jobs:
         shell: bash
         # 独立发行仓形态下 C 自动 SKIP（见 oss-release-check.py 注释），A/B 照强制
         run: python -I tests/oss-release-check.py
+
+  # 业主令 11-04「我们可能要在 macOS 上测试」：首发=实验通道（continue-on-error，
+  # 红不挡 ubuntu/windows 正判、不占首绿定义）；连续多圈稳定后再转正进矩阵。
+  suites-macos:
+    name: suites (macos-latest · 实验)
+    runs-on: macos-latest
+    continue-on-error: true
+    env:
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@ci.local
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@ci.local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: five mechanism suites
+        shell: bash
+        run: bash tests/all.sh
+      - name: release lock (A/B/C)
+        shell: bash
+        run: python -I tests/oss-release-check.py

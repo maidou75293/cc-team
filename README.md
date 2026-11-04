@@ -1,42 +1,69 @@
-# cc-team — 文件台账式多智能体协同引擎
+# cc-team —— 你提需求，它出货：多智能体开发生产线
 
-一个**纯标准库、零外部依赖**的引擎：把工作单元登记成带状态机的「卡」（账本=JSON 文件+事件日志），
-把执行者编排成「泳道」（每个泳道绑定一棵 git worktree），外接**任意命令行终端 agent**
-（Claude Code、Codex CLI 或同形态工具）作为泳道 worker 自动开工、验收、回收。
-所有状态都是人类可读的文件，断网、断电、进程被杀，账本不丢。
+**纯标准库、零外部依赖。** 把需求登记成一张带验收判据的「卡」，引擎就自动派单，
+并行开动多路终端 agent 会话（Claude Code、Codex CLI 或同形态工具）写代码，
+交卷后机器自动复跑你的判据，绿了自动合入主干。所有状态都是人类可读的文件——
+断网、断电、进程被杀，账本不丢，重启先对账再接着跑。
 
 > 本文件是通用发行版。现网运营记录（历史裁定、验收数字、运维台账）留在源仓库 `docs/`，
 > 不随发布包分发。
 
-## 5 分钟上手
+## 先看它怎么跑
 
-```bash
-# 1) 取包（git clone 本仓库，或 pip 安装发布包后 --engine-home 指向源码树）
-cd cc-team
-
-# 2) 初始化你的工作仓（生成目录骨架 + 默认配置 + 计划任务/cron 模板 + 自检）
-python -I ccards/oss_cli.py init --dir /path/to/your-repo
-#    （pip 安装后可直接用控制台命令： cc init --dir /path/to/your-repo）
-#    init 会顺带检测终端 agent（Claude Code）：没装只打印官方安装命令，不静默下载；
-#    想让引擎代执行安装（执行前明示完整命令）： cc init --dir . --install-agent
-#    装完首次使用：终端跑 `claude` 走浏览器 OAuth 登录（需付费计划）或设 ANTHROPIC_API_KEY。
-
-# 3) 跑一遍内置红绿锁（全部断言自包含，只写临时沙箱，不碰任何真实账）
-python -I tests/oss-release-check.py        # 发布自检（本包边界/敏感/默认等价）
-bash tests/all.sh                            # 五套机制回归（账本/对抗/回收/判活/CC环境检测）
-
-# 4) 登记第一张卡并认领
-python -I cards_dag.py create REQ-DEMO-1 --title 示例卡 --verify "true" --files "src/"
-python -I cards_dag.py claim REQ-DEMO-1 --owner lane-a
-python -I cards_dag.py progress REQ-DEMO-1 "开工第一拍" --lane lane-a --epoch 1 --ring 1
-python -I cards_dag.py done REQ-DEMO-1 --owner lane-a --commit <hash> --repo <worktree>
+```
+   你说需求                    引擎干活（全自动）                        你拿结果
+┌───────────┐   ┌───────────────────────────────────────────┐   ┌──────────────┐
+│ 登记一张卡 │ ─▶│ 派单 → N 路泳道并行写码 → 交卷 → 机器复跑  │ ─▶│ 主干上新增一  │
+│ 带验收判据 │   │ 判据 → 绿=已验收 → 自动合流；红=打回重做  │   │ 个带验收痕的  │
+└───────────┘   └───────────────────────────────────────────┘   │ commit        │
+                                                                 └──────────────┘
 ```
 
-接入终端 agent（可选，自动派单所需）：
-- worker 起会话命令 = 配置项 `engine.runner_cmd`（默认值指向一个「把提示词喂给终端 agent」的
-  包装脚本样例，`cc init` 会生成模板，改成你环境里的真实命令即可）；
-- 会话结束自动结账 = 在你的 agent 的 Stop/退出钩子里调用 `ops/check_exit.py`
-  （命令模板同样由 `cc init` 生成）。
+**你只需要三步：**
+
+**① 安装 + 初始化（各一条命令）**
+
+```bash
+git clone https://github.com/<你的镜像>/cc-team.git && cd cc-team
+pipx install .        # 装好得到控制台命令 cc（不装也行：python -I ccards/oss_cli.py 等价）
+
+cc init --dir /path/to/你的代码仓
+#   ↑ 生成运行时目录骨架、config.toml、操作系统计划任务/cron 模板，并自检（末行 ALL_PASS）；
+#     顺带检测终端 agent：没装只打印官方安装命令，绝不静默下载（--install-agent 才代执行）。
+```
+
+**② 开生产线（一条命令）**
+
+```bash
+python ops/ctrld.py loop --live --with-board   # 派发/回收/合流三环常驻一个进程
+# 看板实时围观各卡状态： http://127.0.0.1:8790   （长期运行用 init 装好的计划任务，免守终端）
+```
+
+**③ 把一条需求登记成卡 —— 之后没有第四步**
+
+```bash
+python cards_dag.py create ORDERS-RATE-LIMIT \
+  --title "给订单 API 加限流" \
+  --desc  "每租户每分钟 600 次；超限返回 429 并带 Retry-After；须附并发测试" \
+  --verify "pytest -q tests/test_rate_limit.py" \
+  --files "src/orders/" --lanes ANY
+```
+
+卡一进账本，派单器就接手了：认领 → 起会话（多道可同时飞）→ worker 在各自 worktree
+泳道里写码提交 → 会话退出钩子自动跑你写的验收命令 → 绿 = VERIFIED → 合流看护把该道
+提交快进并进主干。你在看板上看着这张卡从「待领」走到「已验收」，然后你的仓库
+`git log` 里多了一个**带机器验收痕**的 commit——它就是你自己部署流水线的放行信号
+（部署动作留在你的管线；引擎不碰你的生产环境）。
+
+## 凭什么信它
+
+- **「已验收」不靠人点头**：判据写在卡面，done 之后由机器统一复跑，账本存 `verify_run` 痕；
+- **僵尸有收尸**：心跳断流回收、认领未起班尸检、会话身份绑锚防串卡——worker 中途死掉，
+  卡自动回队头重派，不会有一张卡「卡在在制」；
+- **闸门先证明红得起来**：每个防护都配「撤掉修复必红」的注入自证（`--fault` 差分对），
+  五套机制套件 + 发布锁在 GitHub CI 的 Linux/Windows 真机每次推送实跑；
+- **账本可审计**：`state/graph.json`（当前态）+ 追加式 `events.log`（全部转移）+
+  `claims/`（认领凭证），每一步「谁、何时、依据什么」都有痕。
 
 ## 概念与账本
 
@@ -215,6 +242,27 @@ Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
   才明示后代执行安装）；跑完自检输出 `ALL_PASS`。
 - `cc selftest [--engine-home <dir>]` —— 跑引擎自带红绿锁套件。
 - `cc export --out <dir>` —— 按发布白名单导出干净发行包。
+
+## 附录：手工底层命令（正常流程用不到，观察/调试/无 daemon 直驱时才碰）
+
+```bash
+# 引擎自带的红绿锁（全部断言自包含，只写临时沙箱，不碰真实账）
+python -I tests/oss-release-check.py   # 发布自检：敏感清零/白名单边界/默认等价
+bash tests/all.sh                      # 五套机制回归：账本/对抗/回收/判活/CC 环境检测
+
+# 不开 ctrld 的手工全链路（一张卡从立到验收走一遍，理解状态机用）
+python -I cards_dag.py create REQ-DEMO-1 --title 示例卡 --verify "true" --files "src/"
+python -I cards_dag.py claim REQ-DEMO-1 --owner lane-a
+python -I cards_dag.py progress REQ-DEMO-1 "开工第一拍" --lane lane-a --epoch 1 --ring 1
+python -I cards_dag.py done REQ-DEMO-1 --owner lane-a --commit <hash> --repo <worktree>
+python -I cards_dag.py verdict REQ-DEMO-1 PASS --as Verifier
+```
+
+接入终端 agent（自动派单两件套，`cc init` 均生成模板）：
+- 起会话命令 = 配置项 `engine.runner_cmd`：一个「把提示词喂给终端 agent」的包装脚本样例，
+  改成你环境里的真实命令即可（`--lanes` 名册 + 本键 = 派单器知道往哪道起谁）；
+- 会话结束自动结账 = 在你的 agent 的 Stop/退出钩子里调 `ops/check_exit.py`（按会话身份
+  安全结算，防串卡）。
 
 ## 许可
 
