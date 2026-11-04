@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -479,7 +480,9 @@ def _stage_commit(repo, fname, content):
 def run_demo(out=print):
     """全链沙箱演示（README「三分钟现场」的可感版）：临时 team + 临时 git 仓，
     立卡 3 张后模拟工人：#1 交卷判据绿→验收绿；#2 判据红→不放行留待验；#3 验收后被抽查打回→返工重交转绿；
-    终局后把三张泳道交付物组成的「文档问答」小系统真起进程现场跑一遍（业主 23:3x：要有建成的系统演示）。
+    终局后把三张泳道交付物组成的「内部审批系统」真起进程现场跑一遍（引擎冒烟两单+界面件在册，
+    业主 23:5x：系统要有界面、做完要有演示）。CC_DEMO_KEEP_DIR=<目录>=把交付仓迁出后自毁（
+    实录器出产品图用；未设=原样连仓毁，测试与生产行为零变化）。
     演示永远走手填模板（不依赖也不计费外接 agent）；结束销毁沙箱，正账零接触。"""
     tmp = tempfile.mkdtemp(prefix="cc-wizard-demo-")
     team = os.path.join(tmp, "team")
@@ -504,21 +507,21 @@ def run_demo(out=print):
         out("—— 沙箱演示开始（临时账 %s；你的仓库零改动）——" % team)
         # 判据形=仓内相对产物 grep（red-first：立卡时产物未落盘=判据点名缺失文件，
         # 卡面 --files 申报=R2 豁免在册，同 README 三分钟现场口径；闸一个不绕）
-        # 业主 23:3x「还要有创建出来的系统演示」：三张卡的交付物=一个真能跑的
-        # 「文档问答」小系统（入库/检索/入口），链尾真起进程跑主干代码问答——
+        # 业主 23:5x 再定稿：演示=开发一个「内部审批系统」——系统必须有界面（真 HTML 单页应用，
+        # 泳道合入主干的交付物）、方案输出要有产品图确认、做完要有系统现场演示。
         # 判据仍 ASCII marker（grep 中文参数=双侧 OS 编码坑，见 11-02 血泪注）。
         ask = QueueAsk([
-            "我要建设一个企业内部智能体",       # ②需求（业主原话示例）
+            "我要做一个内部审批系统",           # ②需求（业主 23:5x 点名场景）
             "3",                                # 模块数
-            "文档入库与索引", "上传的文档入库、供检索", "",
-            "grep -q INDEX-OK demo_docs.py", "demo_docs.py",
-            "提问时系统自动引用库内文档",
-            "检索问答与出处", "关键词检索库内文档，答复必须带出处", "",
-            "grep -q ANSWER-OK demo_answer.py", "demo_answer.py",
-            "答案尾部就是出处文件名",
-            "命令行入口与端到端", "一条命令提问，串联入库与回答", "",
-            "grep -q E2E-OK demo_app.py", "demo_app.py",
-            "python demo_app.py \"你的问题\" 即得带出处的答复",
+            "审批流程引擎", "提交-审批-驳回状态流转与留痕，已决单不可再决", "",
+            "grep -q APPROVE-CORE-OK approval_core.py", "approval_core.py",
+            "界面与冒烟共用同一套流转规则",
+            "审批界面（单页应用）", "浏览器打开即用：提交申请、列表、一键通过/驳回", "",
+            "grep -q APPROVE-UI-OK approval_ui.html", "approval_ui.html",
+            "浏览器打开 approval_ui.html 直接操作",
+            "端到端冒烟与留痕", "命令行复核两单：通过一单、驳回一单，留痕齐全", "",
+            "grep -q E2E-OK approval_smoke.py", "approval_smoke.py",
+            "python approval_smoke.py 即复核全流程",
             "确认",                             # ④审阅=确认批量立卡
         ])
         plan, ids = run_chain(ledger, repo, ask, out=out,
@@ -548,55 +551,73 @@ def run_demo(out=print):
                                 out=out, cwd=repo)  # 判据含仓内相对路径→复跑窗钉在交付仓
             broadcast_once(team, st, None, out)
             return rc
-        # ── 小系统三件交付物（泳道各自 commit 落盘，链尾真跑=代码全部出自合入主干的提交）──
-        _DOCS = ('# INDEX-OK  演示知识库：两份企业文档内嵌（沙箱演示数据，非业务账）\n'
-                 'DOCS = {\n'
-                 '    "returns.txt": "退货期限为 30 天，保留小票即可到服务台办理。",\n'
-                 '    "warranty.txt": "整机保修 12 个月，电池等耗材保修 6 个月。",\n'
-                 '}\n')
-        _ANSWER_WIP = ('# 半成品：检索可用但未按卡面要求内嵌自检标记——判据就是判据，不口头达标\n'
-                       'import re\n'
-                       '\n'
-                       'from demo_docs import DOCS\n'
-                       '\n'
-                       '\n'
-                       'def answer(question):\n'
-                       '    q = re.sub(r"[？?。！!吗的了呢啊]", " ", question)\n'
-                       '    toks = set()\n'
-                       '    for seg in q.split():\n'
-                       '        toks.add(seg)\n'
-                       '        for i in range(len(seg) - 1):\n'
-                       '            toks.add(seg[i:i + 2])\n'
-                       '    for src, text in DOCS.items():\n'
-                       '        for kw in sorted(toks, key=len, reverse=True):\n'
-                       '            if kw and kw in text:\n'
-                       '                return text, src\n'
-                       '    return "库内暂无匹配文档，建议补充后再问。", "-"\n')
-        _APP_V1 = ('# E2E-OK  命令行入口：提问→从库内文档找答复（演示 v1）\n'
-                   'import sys\n'
-                   '\n'
-                   'from demo_answer import answer\n'
-                   '\n'
-                   'if __name__ == "__main__":\n'
-                   '    q = " ".join(sys.argv[1:]) or "退货"\n'
-                   '    text, src = answer(q)\n'
-                   '    print("答复：%s（出处：%s）" % (text, src))\n')
-        _APP_V2 = ('# E2E-OK  返工：答复与出处按输出规范分行，并标注口径版本 v2\n'
-                   'import sys\n'
-                   '\n'
-                   'from demo_answer import answer\n'
-                   '\n'
-                   'if __name__ == "__main__":\n'
-                   '    q = " ".join(sys.argv[1:]) or "退货"\n'
-                   '    text, src = answer(q)\n'
-                   '    print("答复：%s" % text)\n'
-                   '    print("出处：%s" % src)\n')
+        # ── 审批系统三件交付物（泳道各自 commit 合入主干；界面=真能打开的单页应用）──
+        _CORE = ('# APPROVE-CORE-OK  审批流程引擎（演示件：状态机+留痕，纯标准库零依赖）\n'
+                 '_seq = [0]\n'
+                 '\n'
+                 '\n'
+                 'def submit(title, approver):\n'
+                 '    _seq[0] += 1\n'
+                 '    return {"id": _seq[0], "t": title, "a": approver, "s": "待审批", "log": ["submit"]}\n'
+                 '\n'
+                 '\n'
+                 'def decide(rec, decision, reason=""):\n'
+                 '    assert rec["s"] == "待审批", "已决单不可再决"\n'
+                 '    rec["s"] = decision\n'
+                 '    rec["log"].append(decision + (": " + reason if reason else ""))\n'
+                 '    return rec\n')
+        _UI = ('<!doctype html><!-- APPROVE-UI-OK  内部审批单页界面（演示件：localStorage 持久，'
+               '无后端无网络）-->\n<meta charset="utf-8"><title>内部审批</title>\n'
+               '<style>body{font:14px "Microsoft YaHei",sans-serif;background:#f2f5fa;margin:0;'
+               'padding:24px;color:#1c2740}.card{max-width:640px;margin:0 auto;background:#fff;'
+               'border:1px solid #d8e0ec;border-radius:12px;padding:18px}input,select{padding:7px 10px;'
+               'border:1px solid #c6d2e2;border-radius:8px}button{background:#2f6fed;color:#fff;border:none;'
+               'padding:7px 12px;border-radius:8px;cursor:pointer;margin-left:6px}ul{padding:0}'
+               'li{list-style:none;margin:8px 0;padding:10px;border:1px solid #e2e8f2;border-radius:8px;'
+               'background:#fbfdff}.badge{float:right;font-size:12px;padding:2px 10px;border-radius:10px}'
+               '.ok{background:#e5f6ec;color:#1e6f42}.wait{background:#fff5df;color:#8a5a00}'
+               '.no{background:#fdecee;color:#a03040}h3{margin:0 0 12px}</style>\n'
+               '<div class=card><h3>内部审批系统</h3>\n'
+               '<form id=f><input id=t placeholder="申请事项（如：采购服务器 3 台）" size=34 required>'
+               '<select id=a><option>张工</option><option>李经理</option></select>'
+               '<button>提交</button></form><ul id=l></ul></div>\n'
+               '<script>\nconst K="approvals";let db=JSON.parse(localStorage.getItem(K)||"[]");\n'
+               'function save(){localStorage.setItem(K,JSON.stringify(db));render()}\n'
+               'function render(){l.innerHTML=db.map((r,i)=>"<li><b>"+r.t+"</b>"'
+               '+"<span class=\\"badge "+(r.s==="通过"?"ok":r.s==="驳回"?"no":"wait")+"\\">"'
+               '+r.s+" · "+r.a+"</span>"+(r.s==="待审批"?"<button onclick=\\"act("+i+",\'通过\')\'>'
+               '通过</button><button onclick=\\"act("+i+",\'驳回\')\'>驳回</button>":"")+"</li>").join("")'
+               '||"<li style=\'color:#8a5a00\'>暂无审批单——提交一单试试</li>"}\n'
+               'function act(i,s){db[i].s=s;save()}\n'
+               'f.onsubmit=e=>{e.preventDefault();db.push({t:t.value,a:a.value,s:"待审批"});'
+               't.value="";save()}\n'
+               'if(location.search.indexOf("demo")>=0){db=[{t:"采购服务器 3 台（预算 ¥45,000）",'
+               'a:"李经理",s:"通过"},{t:"出差上海报销 ¥1,280",a:"张工",s:"待审批"}]}\n'
+               'render()\n</script>\n')
+        _UI_WIP = _UI.replace("<!-- APPROVE-UI-OK  内部审批单页界面（演示件：localStorage 持久，"
+                              "无后端无网络）-->",
+                              "<!-- 半成品：界面可操作但未按卡面要求内嵌自检标记——判据就是判据，不口头达标 -->")
+        _SMOKE_V1 = ('# E2E-OK  端到端冒烟 v1：两单挤一行打印（演示打回前形态）\n'
+                     'from approval_core import submit, decide\n'
+                     '\n'
+                     "r1 = decide(submit('采购服务器 3 台', '李经理'), '通过')\n"
+                     "r2 = decide(submit('出差报销 ¥1,280', '张工'), '驳回', '金额超限需补充凭证')\n"
+                     'print("冒烟1 #%s %s → %s 冒烟2 #%s %s → %s" % (\n'
+                     '    r1["id"], r1["t"], r1["s"], r2["id"], r2["t"], r2["s"]))\n')
+        _SMOKE_V2 = ('# E2E-OK  返工 v2：两单分行打印，留痕含理由与审批人（输出规范）\n'
+                     'from approval_core import submit, decide\n'
+                     '\n'
+                     "r1 = decide(submit('采购服务器 3 台', '李经理'), '通过')\n"
+                     "r2 = decide(submit('出差报销 ¥1,280', '张工'), '驳回', '金额超限需补充凭证')\n"
+                     'print("冒烟1 #%s %s → %s（审批人：%s）" % (r1["id"], r1["t"], r1["s"], r1["a"]))\n'
+                     'print("冒烟2 #%s %s → %s（理由：%s）" % (\n'
+                     '    r2["id"], r2["t"], r2["s"], r2["log"][-1].split(": ", 1)[1]))\n')
         e1 = worker("slot-1", ids[0])
-        c1 = _stage_commit(repo, "demo_docs.py", _DOCS)
-        ship("slot-1", ids[0], e1, c1, "demo_docs.py")
+        c1 = _stage_commit(repo, "approval_core.py", _CORE)
+        ship("slot-1", ids[0], e1, c1, "approval_core.py")
         e2 = worker("slot-2", ids[1])
-        c2 = _stage_commit(repo, "demo_answer.py", _ANSWER_WIP)
-        ship("slot-2", ids[1], e2, c2, "demo_answer.py")
+        c2 = _stage_commit(repo, "approval_ui.html", _UI_WIP)
+        ship("slot-2", ids[1], e2, c2, "approval_ui.html")
         red_status = ledger.cards().get(ids[1], {}).get("status")
         if red_status != "DONE":
             out("[演示异常] 判据红的卡竟放行了（status=%s）——不放行闸失效" % red_status)
@@ -604,10 +625,10 @@ def run_demo(out=print):
             out("[判据红] %s 卡面 verify 复跑不过——不放行：卡停在『待验(DONE)』，"
                 "不盖『已验收(VERIFIED)』；返工补绿或 PM 处置才收口" % ids[1])
         e3 = worker("slot-1", ids[2])
-        c3 = _stage_commit(repo, "demo_app.py", _APP_V1)
-        ship("slot-1", ids[2], e3, c3, "demo_app.py")
+        c3 = _stage_commit(repo, "approval_smoke.py", _SMOKE_V1)
+        ship("slot-1", ids[2], e3, c3, "approval_smoke.py")
         ledger.run("verdict", ids[2], "REJECT",
-                   "--reason", "演示：验收后抽查发现答复与出处未按规范分行（口径偏差），打回返工",
+                   "--reason", "演示：验收后抽查发现两单留痕挤一行、驳回理由丢失（输出口径偏差），打回返工",
                    out=out, cwd=repo)
         broadcast_once(team, st, None, out)
         # 打回返工闭环（业主 2026-11-04 23:0x 直令「演示要有始有终」）：返工重交，验收章
@@ -616,38 +637,52 @@ def run_demo(out=print):
         if e3b is None:
             out("[演示异常] 返工重领失败——闭环缺环节")
             return {"error": "rework-claim", "ids": ids}
-        c3b = _stage_commit(repo, "demo_app.py", _APP_V2)
-        ship("slot-1", ids[2], e3b, c3b, "demo_app.py")
+        c3b = _stage_commit(repo, "approval_smoke.py", _SMOKE_V2)
+        ship("slot-1", ids[2], e3b, c3b, "approval_smoke.py")
         out("%s [返工完成] %s 打回后返工重交——绿章=机器复跑判据通过，见上拍播报" % (STAGE5, ids[2]))
         statuses = {cid: ledger.cards().get(cid, {}).get("status") for cid in ids}
         out("[演示收] 三张卡终局：%s（判据红不放行=留待验；打回返工=重交转绿；全程闸都在）"
             % "，".join("%s=%s" % (k, v) for k, v in sorted(statuses.items())))
-        # 建成系统现场跑一遍（业主 23:3x「还要有创建出来的系统演示」+次日头一轮反馈「演示呢？」
-        # ——加厚：连问两题，两题都答得出=系统是真跑的不是摆的；答复与出处=泳道写进主干的代码）
-        out("—— 建成的系统现场跑一遍（真起进程跑主干代码，连问两题）——")
-        bad = 0
-        for q in ("退货的期限是几天？", "电池保修多久？"):
-            app_rc, app_lines = -1, []
-            try:
-                pr = subprocess.run([sys.executable, "demo_app.py", q],
-                                    cwd=repo, capture_output=True, text=True,
-                                    encoding="utf-8", errors="replace", timeout=60,
-                                    creationflags=NO_WIN)
-                app_rc = pr.returncode
-                app_lines = [ln.strip() for ln in (pr.stdout or "").splitlines() if ln.strip()]
-            except Exception as e:
-                out("[演示异常] 系统演示起进程失败：%r" % (e,))
-            out("[系统演示] 问：" + q)
-            for ln in app_lines:
-                out("[系统演示] " + ln)
-            if app_rc != 0 or not app_lines:
-                bad += 1
-                out("[演示异常] 系统演示退出码=%s——建不起来的东西不配叫闭环" % app_rc)
-        if bad:
+        # 建成系统现场跑一遍（业主 23:5x 定稿：审批系统=引擎+界面，做完要现场演示）：
+        # 冒烟两单真起进程跑主干代码，界面件在册可浏览器打开——答复/留痕/界面全出自泳道提交。
+        out("—— 建成的系统现场跑一遍（真起进程跑主干代码：冒烟复核两单+界面件在册）——")
+        app_rc, app_lines = -1, []
+        try:
+            pr = subprocess.run([sys.executable, "approval_smoke.py"],
+                                cwd=repo, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60,
+                                creationflags=NO_WIN)
+            app_rc = pr.returncode
+            app_lines = [ln.strip() for ln in (pr.stdout or "").splitlines() if ln.strip()]
+        except Exception as e:
+            out("[演示异常] 系统演示起进程失败：%r" % (e,))
+        for ln in app_lines:
+            out("[系统演示] " + ln)
+        if app_rc != 0 or len(app_lines) < 2:
+            out("[演示异常] 冒烟复核未跑通（两单留痕缺一不算数）退出码=%s——建不起来的东西不配叫闭环" % app_rc)
             return {"error": "app-demo", "ids": ids, "statuses": statuses}
+        out("[系统演示] 界面件 approval_ui.html 已随泳道合入主干——浏览器打开即可提交/通过/驳回"
+            "（地址带 ?demo=1 自动走单演示）")
         out("—— 沙箱演示结束（临时账销毁；主干分支=%s）——" % branch)
         return {"skipped": None, "ids": ids, "statuses": statuses, "transcript_team": team}
     finally:
+        # 迁移件仅实录面用（产品图=对泳道交付的 approval_ui.html 真实渲染）；账与临时根照毁。
+        keep = (os.environ.get("CC_DEMO_KEEP_DIR") or "").strip()
+        if keep and os.path.isdir(os.path.join(repo, ".git")):
+            try:
+                os.makedirs(keep, exist_ok=True)
+                if os.path.isdir(os.path.join(keep, "repo")):
+                    _demo_kill = os.path.join(keep, "repo")
+                    for _p, _d, _f in os.walk(_demo_kill):
+                        for _x in _d + _f:
+                            try:
+                                os.chmod(os.path.join(_p, _x), stat.S_IWRITE | stat.S_IREAD)
+                            except OSError:
+                                pass
+                    shutil.rmtree(_demo_kill, ignore_errors=True)
+                shutil.move(repo, os.path.join(keep, "repo"))
+            except Exception:
+                pass
         shutil.rmtree(tmp, ignore_errors=True)
 
 

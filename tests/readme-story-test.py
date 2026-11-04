@@ -5,11 +5,15 @@
 # R3 按 23:0x 打回落定稿（业主原话「先不管看板，就是在对话框输出过程」「动态过程还是老的」）：
 #      画面=单一 CC 对话框全链实录，T2c/T3 从「四画面含看板」改为「五段过程拍齐 + board=0
 #      负锁」；看板出现在图注窗口=红（回退旧文案的差分靶）。
+# R6 按 23:5x 打回增锁（业主原话「演示做一个内部审批系统，输出要有产品图确认，做完了要有系统
+#      演示」「第一个动画也保留」）：T2c 桶单加 mockup（产品图实拍帧≥1，无头浏览器对交付件
+#      真渲染，不许口头）；新增 T2d 给保留的第一版动画 demo-docqa.gif 立案（存在/魔数/帧数/
+#      体积/SCENES 六桶+board=0/TOTAL 对账）——「保留」也得上锁，删了会红。
 #   T1 头引图：全文第一个被引用的图片必须是 demo.gif，且位于第一个二级标题之前（置顶）；
 #   T2 动画本体：demo.gif 存在、魔数 GIF89a、帧数≥10、体积<8MB（业主 11-04 22:1x 打回补画面后
 #      放宽上限；重录变大/退化仍即红）；
 #   T2c 画面构成（R3 定稿+R4 补「建成系统演示」业主 23:3x）：GIF 注释扩展块内 SCENES 清单
-#      必须点名 init/dialog/gate_red/rework/green/app_demo 六段过程拍且各≥1 帧、board=0
+#      必须点名 init/dialog/gate_red/rework/green/mockup/app_demo 七段过程拍且各≥1 帧、board=0
 #      （无看板画面），TOTAL 与逐块实数帧数一致——缺任何一拍（尤其「判据红不放行」「打回返工」
 #      「系统现场问答」三拍＝业主点名要看的「过程」）即红；
 #   T3 真实来源标注：图引用行 ±2 行窗口内含「沙箱/SANDBOX」与「加速/accelerated」两标，
@@ -179,7 +183,7 @@ def t2c():
     if not cm:
         return bad("T2c 画面构成", "GIF 注释扩展块无 SCENES 清单（渲染端未落画面凭据）")
     man = cm[0]
-    need = ("init", "dialog", "gate_red", "rework", "green", "app_demo")
+    need = ("init", "dialog", "gate_red", "rework", "green", "mockup", "app_demo")
     counts, miss = {}, []
     for k in need:
         m = re.search(r"\b%s=(\d+)" % k, man)
@@ -188,10 +192,10 @@ def t2c():
         else:
             counts[k] = int(m.group(1))
     if miss:
-        bad("T2c 画面构成", "缺过程拍 %s｜清单=%s（要求 装机自检/对话/判据红不放行/打回返工/验收绿/建成系统现场跑 各≥1 帧）"
+        bad("T2c 画面构成", "缺过程拍 %s｜清单=%s（要求 装机自检/对话/判据红不放行/打回返工/验收绿/产品图实拍/建成系统现场跑 各≥1 帧）"
             % (",".join(miss), man))
     else:
-        ok("T2c 六段过程拍齐备 %s" % man)
+        ok("T2c 七段过程拍齐备 %s" % man)
     mb = re.search(r"\bboard=(\d+)", man)
     ok("T2c 单对话框无看板（board=0 在册）") if (mb and mb.group(1) == "0") \
         else bad("T2c 画面构成", "board 清单缺位或≠0（业主 23:0x 定稿=对话框外画面不许进）｜%s" % man)
@@ -201,6 +205,36 @@ def t2c():
         ok("T2c 清单帧数与实帧一致（TOTAL=%d）" % real)
     else:
         bad("T2c 帧数漂移", "清单=%s 实帧=%s" % (m.group(1) if m else "无", real))
+
+
+# ─────────── T2d 保留的第一版动画（业主 23:5x「第一个动画也保留」= 机器在册） ───────────
+DOCQA = os.path.join(SRC, "demo-docqa.gif")
+
+
+def t2d():
+    if not os.path.isfile(DOCQA):
+        return bad("T2d 第一版动画保留", "demo-docqa.gif 缺失（业主明令保留，删除=红）")
+    data = open(DOCQA, "rb").read()
+    ok("T2d demo-docqa.gif 魔数 GIF89a") if data[:6] == b"GIF89a" else bad("T2d 魔数", data[:6])
+    fc = gif_frame_count(data)
+    ok("T2d 第一版帧数=%d（≥10）" % fc) if fc >= 10 else bad("T2d 帧数", fc)
+    size = len(data)
+    ok("T2d 第一版体积 %.1fKB（<8MB）" % (size / 1024.0)) if size < 8 * 1024 * 1024 \
+        else bad("T2d 体积", "%d 字节 ≥8MB" % size)
+    cm = [c for c in gif_comments(data) if c.startswith("SCENES")]
+    if not cm:
+        return bad("T2d 第一版画面构成", "无 SCENES 清单")
+    man = cm[0]
+    miss = [k for k in ("init", "dialog", "gate_red", "rework", "green", "app_demo")
+            if not re.search(r"\b%s=[1-9]\d*" % k, man)]
+    mb = re.search(r"\bboard=(\d+)", man)
+    mt = re.search(r"\bTOTAL=(\d+)", man)
+    if not miss and mb and mb.group(1) == "0" and mt and int(mt.group(1)) == fc:
+        ok("T2d 第一版 SCENES 对账（六桶齐·board=0·TOTAL=%d 实帧一致）" % fc)
+    else:
+        bad("T2d 第一版画面构成", "缺桶=%s board=%s TOTAL=%s 实帧=%d｜%s"
+            % (",".join(miss) or "无", mb.group(1) if mb else "无",
+               mt.group(1) if mt else "无", fc, man))
 
 
 # ─────────────────────────── T3 sandbox/加速标注 + cc demo 指认 ───────────────────────────
@@ -363,7 +397,7 @@ def t8():
 
 
 if __name__ == "__main__":
-    for fn in (t1, t2, t2c, t3, t4, t5, t6, t7, t8):
+    for fn in (t1, t2, t2c, t2d, t3, t4, t5, t6, t7, t8):
         try:
             fn()
         except Exception as e:                               # 判据自身异常=红，不许静默

@@ -1,8 +1,8 @@
 # cc-team —— 给 git 地址 + 一句话，CC 自举；之后全对话
 
-![单一 Claude Code 对话框的全链对话实录（SANDBOX · 按真实时戳加速回放）：给 git 地址 → 装机自检 → 说人话需求 → 立卡开工 → 交卷 → 判据红不放行 → 打回返工 → 机器盖章合入 → 建成的系统现场问答](demo.gif)
+![单一 Claude Code 对话框的全链对话实录（SANDBOX · 按真实时戳加速回放）：给 git 地址 → 装机自检 → 说人话需求 → 立卡开工 → 交卷 → 判据红不放行 → 打回返工 → 机器盖章合入 → 交付界面产品图实拍确认 → 建成的内部审批系统现场演示](demo.gif)
 
-*画面里只有一个对话框，你全程只做三件事：把 git 地址粘给 Claude Code、用人话把需求说清、回一句「确认」。其余每一行都是引擎真实执行输出——`git clone` 与 `cc init` 自检落地 `ALL_PASS`、`cc` 首次进入自动在一次性临时沙箱把全链跑给你看：立卡、起工位、领任务交卷、判据红的卡如实停在待验不放行、验收后被抽查打回、返工重交由机器复跑判据才落绿章、终局逐卡对账；链收口后**把建成的系统现场跑一遍**——三条泳道合入主干的文件组成一个「文档问答」小程序，提问「退货的期限是几天？」，答复带出处真打出来。真跑实录非摆拍：逐帧按真实时戳拼帧加速回放，临时随机路径已隐去，同一链路你本地复跑可对照（`cc init` + `cc` 首进即见，或 `cc demo` 跑双泳道并行全链后自毁）。*
+*画面里只有一个对话框，你全程只做三件事：把 git 地址粘给 Claude Code、用人话把需求说清、回一句「确认」。其余每一行都是引擎真实执行输出——`git clone` 与 `cc init` 自检落地 `ALL_PASS`、`cc` 首次进入自动在一次性临时沙箱把全链跑给你看：这轮说的是「做一个内部审批系统」，立卡、起工位、领任务交卷、判据红的卡如实停在待验不放行、验收后被抽查打回、返工重交由机器复跑判据才落绿章、终局逐卡对账；界面卡交卷后，无头浏览器对交付件 `approval_ui.html` 真实出图，**产品图进对话等你确认**；链收口后**把建成的系统现场跑一遍**——通过一单、驳回一单，审批人与理由留痕齐全，最后一帧是界面真渲染的现场演示。真跑实录非摆拍：逐帧按真实时戳拼帧加速回放，实拍帧是无头浏览器对合入主干交付件的真渲染，临时随机路径已隐去，同一链路你本地复跑可对照（`cc init` + `cc` 首进即见，或 `cc demo` 跑双泳道并行全链后自毁）。*
 
 [![ci](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml/badge.svg)](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -67,6 +67,12 @@ worktree 泳道写码提交 → 会话退出钩子自动跑你的验收命令 �
 零真实账触碰；末行 `DEMO_PASS` = 全链通，任一环节断 = `DEMO_FAIL: <环节名>`。上面头牌动画
 的第四段画面就是这条命令的实录转译，你可以复跑对照。首次进 `cc` 向导也会自动先在临时沙箱
 把全链演一遍（含「判据红就不放行」「验收后可打回」两种真实结局），你点头才碰你的仓库。
+
+## 第一版动画（保留）
+
+![第一版全链对话实录（SANDBOX · 按真实时戳加速回放）：同一对话框，建成的系统是「文档问答」小程序——提问「退货的期限是几天？」，答复带出处真打出来](demo-docqa.gif)
+
+*业主明令保留的第一版，原样存档可对照：同样是单一对话框全链实录，建成的系统换成「文档问答」小程序——三条泳道合入主干的文件组成它，提问带出处真答。头牌动画是它的下一版：建成的系统换成有界面的内部审批系统，并补上产品图确认与现场演示。*
 
 ## 和现成方案的差异（2026-11 对公开项目实测调研）
 
@@ -250,8 +256,8 @@ cc-team/
 ## 发布边界
 
 发布包只含：`ccards/`、`ops/`、`tests/`、`deploy/`（Linux systemd / macOS launchd 常驻模板）、
-`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`demo.gif`（头牌动画资产，
-与 README 引用逐条对账=判据 `readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
+`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`demo.gif` 与保留的第一版
+`demo-docqa.gif`（动画资产与 README 引用逐条对账=判据 `readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
 `CHANGELOG.md`、`CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`（脚本强制 LF——
 Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
 **运行现账一律不出包**：`state/`、`logs/`、`claims/`、`briefs/`、`inbox/`、`registry` 实账、

@@ -22,6 +22,7 @@ ccards/progress.py
 ccards/retire.py
 ccards/statemachine.py
 ccards/wizard.py
+demo-docqa.gif
 demo.gif
 deploy/launchd/com.cc.ctrld.plist
 deploy/systemd/cc-ctrld.service
