@@ -1750,8 +1750,14 @@ $CARD claim 0852 --owner r74c >/dev/null
 $CARD done 0852 --owner r74c --commit HEAD --repo $REPO >/dev/null 2>&1
 expect_fail bind 0852 --session x-1      # DONE 卡拒 bind（cmd_bind 只接 CLAIMED 的闸）
 # ④补绑：r74b 在制无锚卡 + 活转录 → backfill_binds 找到并补；再跑一次锚不变（幂等）。
+# BUG-SELFTEST85-EXEMPT-FIXTURE-1（2026-11-05 公仓 CI 双 OS 恒红实锤）：claim 必带 --pid 真锚
+#   （selftest 壳进程 $$ 活到本段跑完=真锚在场→commands.py has_anchor 判 kind=lane 派发型）。
+#   BUG-BIND-PMCLAIM-EXEMPT-1 后 claim 落盘 kind：无锚形自动落 kind=session 自执档→
+#   backfill_binds 顶置 BIND-EXEMPT 闸整卡跳过（引擎定版语义：自执卡结构性无简报双锚转录、
+#   不进连拍账不出铃——豁免不得染指）→旧夹具④必红。坏的是夹具非引擎：补真锚复原派发形，
+#   闸体零改动。常驻锁 tests/selftest85-kind-lock-test.py（A4 钉本行 --pid 防二次漂移）。
 $CARD create 0853 --title 补绑卡 --lanes r74b --verify "true" >/dev/null
-$CARD claim 0853 --owner r74b >/dev/null
+$CARD claim 0853 --owner r74b --pid $$ >/dev/null
 grep -q '"session_id": "-"' $CC_TEAM_HOME/claims/0853/claim.json && ok "85 夹具成形：在制无锚" || bad "85 claim 未带占位锚(前提不成立)"
 S74B=$(slug74 r74b)
 mkdir -p "$F74/$S74B"

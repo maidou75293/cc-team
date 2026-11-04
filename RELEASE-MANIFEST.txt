@@ -96,6 +96,7 @@ tests/runcc-anchor-test.py
 tests/sandbox_tree_naming_check.py
 tests/select.sh
 tests/selftest.sh
+tests/selftest85-kind-lock-test.py
 tests/slot-churn-test.py
 tests/sop-attrib-test.py
 tests/sop-confirm-test.py
