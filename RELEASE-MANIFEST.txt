@@ -82,6 +82,7 @@ tests/panel_dom_check.mjs
 tests/pid_alive_test.py
 tests/pm-wake-receipt-test.py
 tests/purge-archive-test.py
+tests/readme-story-test.py
 tests/recon-tailrace-test.py
 tests/reconcile-tombstone-test.py
 tests/recycle_guard_test.py
@@ -94,6 +95,7 @@ tests/selftest.sh
 tests/slot-churn-test.py
 tests/sop-attrib-test.py
 tests/sop-confirm-test.py
+tests/sop-halfbind-test.py
 tests/state_std_test.py
 tests/stoploss-crosslang-test.py
 tests/sweeplock-deadpid-test.py

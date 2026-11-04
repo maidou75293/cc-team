@@ -248,14 +248,31 @@ def _bind_streak_save(d):
 
 def backfill_binds(claimed):
     """每拍补绑：在制 CLAIMED 卡里 session_id 仍 "-" 的，各做一次只读探测。claimed={卡:道}。
-    + BUG-BIND-DEADPATH-1 连拍账：连续无转录可绑到阈=ALARM BIND-MISS（见上注释块）。"""
+    + BUG-BIND-DEADPATH-1 连拍账：连续无转录可绑到阈=ALARM BIND-MISS（见上注释块）。
+    + BUG-BIND-CONFIRMRETRY-1 半成自愈：session_id 已绑≠签收已落——cmd_bind 先写 claim.json
+      成迹、后 graph save 撞 WinError 5 rename 窗崩=「签而不收」：锚在 claim、卡面无 confirm 痕。
+      旧跳检只认 session_id 在场即 continue=永不重试签名，SOP-MISS 铃每拍续记直到 PM 人工补签
+      （2026-11-04 夜实锤 TEST-E2E-PREPUSH-1，alerts count 37）。现于跳检前加一道卡面 confirm
+      缺位核对（整拍懒拿一次 cards 快照，勿逐卡重复 IO）：kind=lane 且卡面 CLAIMED 且无 confirm
+      → 幂等重 bind_gate（cmd_bind 对同 (lane,epoch) 已签幂等不刷 CONFIRM 流水、对三件缺一只
+      WARN 不落痕），trace 落 HALF-BIND-RETRY 痕供夜审；补成后 sweep_confirm_miss 见签收在场
+      自然退账=铃停。rename 撞窗根因留观测（本卡只补重试面，禁动 config 原子写核心）。"""
     streak = _bind_streak_load()
     alive = set()
+    cards = None                               # 半成核对=整拍一份卡面快照（仅已绑卡才现读，未绑不碰此 IO）
     for cid, lane in sorted((claimed or {}).items()):
         try:
             d = _cfg.read_json(os.path.join(_cfg.CLAIMS, cid, "claim.json")) or {}
-            if (d.get("session_id") or "-") != "-":
+            sid = str(d.get("session_id") or "-")
+            if sid != "-":
                 streak.pop(cid, None)          # 已有锚=清账（防旧连拍残留误升级）
+                if cards is None:
+                    cards = (_cfg.read_json(_cfg.GRAPH) or {}).get("cards") or {}
+                c = cards.get(cid) or {}
+                if str(d.get("kind") or "lane") == "lane" and c.get("status") == "CLAIMED" and not c.get("confirm"):
+                    trace("HALF-BIND-RETRY %s@%s：claim 已绑 session=%s 而卡面无 confirm 痕"
+                          "（bind 半成=claim 成迹后 graph save 崩窗）→ 幂等重 bind 补签" % (cid, lane, sid))
+                    bind_gate(cid, sid)
                 continue
             alive.add(cid)
             ts = str(d.get("ts") or "")
