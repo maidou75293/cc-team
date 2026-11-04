@@ -199,7 +199,12 @@ def hook_input():
 def _proc_ancestors():
     """REQ-EXIT-TIDY-1「锚 pid=本次会话起的进程」的现场判据：返回 (pid空间, 含自身的祖先 pid 集)。
     hook 进程由会话进程一路生出——族谱里查得到锚，才算本会话的账。
-    win=Toolhelp32 快照建 pid→ppid 上走；wsl/linux=/proc/<pid>/stat 第 4 字段上走。
+    win=Toolhelp32 快照建 pid→ppid 上走；wsl/linux=/proc/<pid>/stat 第 4 字段上走；
+    无 /proc 的 POSIX 宿主(macOS/BSD，REQ-OSS-MACOS-PORT-1 第七圈实锤 79b/79c HOOK_RC=2=
+    macOS 两分支全落空→族谱恒取不到→保守 block)=os.getppid()+`ps -o ppid= -p` 上走——
+    -o/-p 属 POSIX ps 公用关键字，BSD ps 与 GNU ps 同形；空间标 "wsl" 与
+    ccards.commands._detect_pid_ns 的 posix 侧声明同源（claim 在 macOS 落 pid_ns=wsl，
+    _anchor_why 按 rns!=cns 拒跨空间，两号不同源=证不成永远交不了账）。
     任何取不到=(None, 空集)→调用方保守不交账：宁躺回 CLAIMED 等回收环，绝不猜、不偷账。"""
     if os.name == "nt":
         try:
@@ -255,7 +260,36 @@ def _proc_ancestors():
             return "wsl", chain
         except Exception:
             return None, set()
-    return None, set()
+    # macOS/BSD：无 /proc（REQ-OSS-MACOS-PORT-1 第七圈实锤）——POSIX ps 上走，逐 pid 问 ppid。
+    chain, pid, guard = set(), os.getpid(), 0
+    try:
+        while pid and pid not in chain and guard < 128:
+            chain.add(pid)
+            ppid = _ps_ppid(pid)
+            if ppid is None or ppid == pid:      # 查不到/自环(launchd 顶)=链到此为止
+                break
+            pid = ppid
+            guard += 1
+        return "wsl", chain
+    except Exception:
+        return None, set()
+
+
+def _ps_ppid(pid):
+    """`ps -o ppid= -p <pid>` 取父 pid（POSIX 关键字，BSD/GNU ps 同形）；取不到=None。
+    单独成函数=macos-portability-test 可在三宿主真机对拍此原语（撤修复差分对红）。"""
+    try:
+        r = subprocess.run(["ps", "-o", "ppid=", "-p", str(int(pid))],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    fields = (r.stdout or "").split()
+    if not fields:
+        return None
+    try:
+        return int(fields[0])
+    except ValueError:
+        return None
 
 
 def _anchor_why(claim, meta, sid):

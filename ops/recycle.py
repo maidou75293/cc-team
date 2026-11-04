@@ -779,12 +779,17 @@ def via_host():
 
 
 def _host_alias(via):
-    """宿主名归一（host 字段与 via 痕两种形态同居）：win|nt/win32→'win'；wsl|posix/linux→'wsl'。"""
+    """宿主名归一（host 字段与 via 痕两种形态同居）：win|nt/win32→'win'；wsl|posix/linux|darwin→'wsl'。
+    REQ-OSS-MACOS-PORT-1（第七圈 run 41816330476 macOS 90 族三红实锤 2026-11-04）：旧式
+    `"win" in v` 把 posix/darwin 认成 win 侧——"darWIN" 含子串 win，macOS 本机恒被判成对面宿主，
+    host 字段/verify_run.via 防线（REDAUTO-HOST-1①）在 macOS 永不触发、冤案照旧就地驳。
+    改精确族映射：posix 前缀/linux/darwin 子串先归 wsl 族；win 族只认 nt 前缀/win32/windows
+    子串与 win|gitbash 精确名，弃用裸 "win" 子串（正是 darwin 撞号位）。"""
     v = str(via or "").strip().lower()
-    if v.startswith("nt") or "win" in v or v in ("gitbash", "git-bash"):
-        return "win"
-    if v.startswith("posix") or "linux" in v or v == "wsl":
+    if v.startswith("posix") or "linux" in v or "darwin" in v or v == "wsl":
         return "wsl"
+    if v.startswith("nt") or "win32" in v or "windows" in v or v in ("win", "gitbash", "git-bash"):
+        return "win"
     return None
 
 

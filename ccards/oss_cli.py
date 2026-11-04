@@ -3,7 +3,9 @@
 """oss_cli.py — cc-team 引擎一键面（REQ-OSS-ENGINE-1）。
 
 控制台入口 `cc`（pyproject: cc = "ccards.oss_cli:main"；无安装环境时
-`python -I ccards/oss_cli.py <子命令>` 等价）。三个子命令：
+`python -I ccards/oss_cli.py <子命令>` 等价）。**裸 `cc`（无子命令）=交互向导**
+（REQ-CC-WIZARD-1：提需求→方案书→确认→批量立卡→全程播报；ccards.wizard）。
+四个子命令：
 
   init     --dir <仓根>   生成运行时目录骨架 + config.toml 默认模板 +
                            系统定时模板（Windows 计划任务 / cron 两份）+
@@ -14,6 +16,9 @@
   export   --out <目录>    按发布白名单复制干净发行包（等价一次干净 clone；
                            现账 state/ logs/ claims/ briefs/ registry 实账与
                            运营 docs/ 一律不出包）。
+  demo     [--break-at]    一次性临时沙箱（临时 git 底仓+临时账根）跑通并自毁
+                           立卡→泳道并行→机器验收 全链；不碰任何真实账、不联网；
+                           末行 DEMO_PASS，任一环节失败 DEMO_FAIL: <环节名>。
 
 白名单 RELEASE_DIRS / RELEASE_FILES 是本包边界的**唯一权威**，
 tests/oss-release-check.py 的 B 判据直接引用本常量对账——改边界必须同批改这里。
@@ -22,6 +27,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -375,9 +381,337 @@ def cmd_export(a):
     return 0
 
 
+# ── cc demo（REQ-CC-DEMO-1）：装完一条命令看全链 ────────────────────────────────────────
+# 一次性临时沙箱（mkdtemp 每跑全新=幂等；临时 git 底仓+临时账根）真实跑通
+# 立卡→泳道并行→交付合入→机器验收 全链后自毁。三条验收约束即设计约束：
+#   a) 零真实账触碰：账本操作全部=CC_TEAM_HOME 钉向沙箱账根的**子进程**（与 cmd_init
+#      账本闭环冒烟同一取数式）；cmd_demo 本进程全程 stdlib、不 import ccards。
+#   b) 幂等可重复：沙箱 mkdtemp 唯一、成败必自毁（finally 兜底），零残留无固定路径。
+#   c) 不联网：git 全本地（无 remote/clone/fetch），子程只起本地解释器；静态对账
+#      =tests/cc-demo-test.py T5 扫 demo 段源码无 URL/urllib/socket 字面。
+# 末行契约：成功=DEMO_PASS；任一环节失败=DEMO_FAIL: <环节名>（点名环节；
+# 守卫要红得起来——tests/cc-demo-test.py T2 用 --break-at 逐环节注入验红得起来）。
+DEMO_STEPS = ("建沙箱", "立卡", "泳道并行", "交付合入", "机器验收", "自毁")
+_NO_WIN = 0x08000000 if os.name == "nt" else 0  # 黑窗根除纪律同 ccards.config（此处不引包，免真账 import）
+
+# 演示卡：REQ 前缀=G2 类型闸 enforce 档合法族（type 必与卡号前缀一致）。
+# 判据=相对路径 grep 标记文件：立卡时产物未落盘、失败输出恰点名 --files 声明的
+# 该文件 → 走 REQ-VERIFY-DRYRUN-1 R2 red-first 豁免（「首红基线属预期态」真实形态）；
+# 泳道交付+合入主干后 verdict 复跑同一条判据即绿——一张卡演全「判据先红后绿」。
+_DEMO_CARDS = (
+    ("REQ-DEMO-A", "lane-a", "demo_delivery_a.txt", "OK_DEMO_A", "演示卡A：交付+交卷（主干闸前停 DONE 属预期）"),
+    ("REQ-DEMO-B", "lane-b", "demo_delivery_b.txt", "OK_DEMO_B", "演示卡B：与A并发跑全套"),
+)
+
+_DEMO_CLI_CODE = ("import sys; sys.path.insert(0, %r); "
+                  "from ccards.cli import main; sys.exit(main(sys.argv[1:]))")
+
+# 泳道子程（真实并行体：两条 lane_worker 同时在飞，账本写锁天然串行记账、执行并行）。
+# 全程只动沙箱账根与自己的 worktree；任何一环与预期不符=LANE-FAIL 非零退出（demo 归因到「泳道并行」环节）。
+_DEMO_LANE_SCRIPT = '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""lane_worker.py — cc demo 泳道子程（REQ-CC-DEMO-1 演示数据，非业务道）。
+claim→beat→交付 commit→done（CC_AUTO_VERIFY=1 与生产 run-cc.ps1 注入同源）。
+done 后 AUTO-VERIFY 必须**红在主干闸**（REQ-MERGE-GATE-1：交付未合 main 不许落章、
+卡停 DONE）——这是生产实况不是故障；绿了反倒说明闸坏了，本道判 LANE-FAIL。"""
+import contextlib
+import io
+import os
+import subprocess
+import sys
+
+# 子程 piped stdout 默认随宿主 locale（win=cp936），父侧按 utf-8 收流中文必乱码；
+# -I(含 -E) 挡掉 PYTHONIOENCODING，故进程内 reconfigure（BUG-CCARDS-UTF8-1 同款出口钉）。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+sys.path.insert(0, os.environ["CC_DEMO_CCD"])
+from ccards.cli import run as cli_run  # noqa: E402
+
+LANE, CID, DELIVERY, MARKER, WT = sys.argv[1:6]
+
+
+def cli(*argv):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        try:
+            rc = cli_run(list(argv))
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 1
+    return rc, buf.getvalue()
+
+
+def git(*args):
+    p = subprocess.run(["git", "-C", WT] + list(args), capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def fail(detail):
+    print("LANE-FAIL %s: %s" % (LANE, detail))
+    sys.exit(1)
+
+
+rc, out = cli("claim", CID, "--owner", LANE)
+if rc != 0 or "epoch=" not in out:
+    fail("claim rc=%s out=%s" % (rc, out.strip()[-200:]))
+epoch = out.split("epoch=")[1].split()[0].strip()
+
+rc, out = cli("progress", CID, "开工：领牌首拍", "--lane", LANE,
+              "--epoch", epoch, "--ring", "1")
+if rc != 0 or "BEAT_OK" not in out:
+    fail("beat1 rc=%s out=%s" % (rc, out.strip()[-200:]))
+
+with open(os.path.join(WT, DELIVERY), "w", encoding="utf-8") as f:
+    f.write("%s\\n" % MARKER)
+rc, out = git("add", "-A")
+if rc != 0:
+    fail("git add: %s" % out.strip()[-200:])
+rc, out = git("commit", "-qm", "feat(%s): demo 交付" % CID)
+if rc != 0:
+    fail("git commit: %s" % out.strip()[-200:])
+rc, sha = git("rev-parse", "HEAD")
+if rc != 0 or len(sha.strip()) < 40:
+    fail("git rev-parse: %s" % sha.strip()[-200:])
+sha = sha.strip()
+
+rc, out = cli("progress", CID, "交付 commit=%s" % sha[:12], "--lane", LANE,
+              "--epoch", epoch, "--ring", "2")
+if rc != 0 or "BEAT_OK" not in out:
+    fail("beat2 rc=%s out=%s" % (rc, out.strip()[-200:]))
+
+os.environ["CC_AUTO_VERIFY"] = "1"
+rc, out = cli("done", CID, "--owner", LANE, "--commit", sha, "--repo", WT,
+              "--epoch", epoch, "--evidence", DELIVERY)
+if rc != 0 or (" DONE" not in out and not out.strip().endswith("DONE")):
+    fail("done rc=%s out=%s" % (rc, out.strip()[-200:]))
+if "AUTO-VERIFY" not in out or "红" not in out:
+    fail("done 后 AUTO-VERIFY 未按主干闸预期红: %s" % out.strip()[-200:])
+
+print("LANE-OK %s epoch=%s commit=%s 停DONE待合入" % (LANE, epoch, sha[:12]))
+'''
+
+
+class _DemoFail(Exception):
+    """环节失败（环节名+细节）；cmd_demo 唯一消费口=转成末行 DEMO_FAIL: <环节名>。"""
+
+    def __init__(self, step, detail=""):
+        Exception.__init__(self, "%s — %s" % (step, detail))
+        self.step, self.detail = step, detail
+
+
+def _demo_kill_tree(path):
+    """删净沙箱：Windows 下 git 对象库文件只读（pack/loose object mode 0444），
+    裸 rmtree 必留残骸——先剥只读再删（仅限本函数自家 mkdtemp 根，不伤他物）。"""
+    def _onerr(_fn, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            _fn(p)
+        except OSError:
+            pass
+    shutil.rmtree(path, onerror=_onerr)
+
+
+def _demo_cli(ledger, ccd, argv, cwd, timeout=180):
+    """账本命令子进程：CC_TEAM_HOME 必钉沙箱账根（真账物理够不着）。返回 (rc, stdout, stderr)。"""
+    env = dict(os.environ, CC_TEAM_HOME=ledger)
+    r = subprocess.run([sys.executable, "-I", "-c", _DEMO_CLI_CODE % ccd] + list(argv),
+                       env=env, cwd=cwd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=timeout,
+                       creationflags=_NO_WIN)
+    return r.returncode, r.stdout or "", r.stderr or ""
+
+
+def _demo_git(gitexe, cwd, *args, timeout=120):
+    """demo 侧 git 一律本地仓、显式 -C；输出合流便于失败归因（不引 ccards 免真账 import）。"""
+    r = subprocess.run([gitexe, "-c", "core.quotepath=false", "-C", cwd] + list(args),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=timeout, creationflags=_NO_WIN)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _demo_sandbox(ctx):
+    gitexe = shutil.which("git")
+    if not gitexe:
+        raise _DemoFail("建沙箱", "PATH 里没有 git（演示依赖本地 git 底仓；装完 git 再跑）")
+    root = ctx["root"]
+    repo = os.path.join(root, "repo")
+    ledger = os.path.join(root, "cc-team")
+    for sub in ("state", "claims", "briefs", "logs"):
+        os.makedirs(os.path.join(ledger, sub), exist_ok=True)
+    rc, out = _demo_git(gitexe, root, "init", "-q", "repo")
+    if rc:
+        raise _DemoFail("建沙箱", "git init: %s" % out.strip()[:160])
+    _demo_git(gitexe, repo, "config", "user.name", "cc-demo")
+    _demo_git(gitexe, repo, "config", "user.email", "demo@example.invalid")
+    # 初始分支钉 main（不赌宿主 init.defaultBranch——主干闸按 main→master→trunk 找 ref）
+    rc, out = _demo_git(gitexe, repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    if rc:
+        raise _DemoFail("建沙箱", "git symbolic-ref: %s" % out.strip()[:160])
+    with open(os.path.join(repo, "README.md"), "w", encoding="utf-8") as f:
+        f.write("# cc demo 临时底仓（本地仓，跑完即焚）\n")
+    rc, out = _demo_git(gitexe, repo, "add", "-A")
+    if rc:
+        raise _DemoFail("建沙箱", "git add: %s" % out.strip()[:160])
+    rc, out = _demo_git(gitexe, repo, "commit", "-qm", "chore(demo): 底仓初始化")
+    if rc:
+        raise _DemoFail("建沙箱", "git commit: %s" % out.strip()[:160])
+    for _cid, lane, _f, _m, _t in _DEMO_CARDS:  # 泳道=同仓 worktree，生产 wf-<道> 同形
+        rc, out = _demo_git(gitexe, repo, "worktree", "add", "-q", "-b", lane,
+                            os.path.join(root, "wf-" + lane), "main")
+        if rc:
+            raise _DemoFail("建沙箱", "git worktree(%s): %s" % (lane, out.strip()[:160]))
+    _rc, ver = _demo_git(gitexe, repo, "--version")
+    ctx.update(git=gitexe, repo=repo, ledger=ledger,
+               ccd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    print("    沙箱=%s（临时 git 底仓 main + 临时账根 + %d 条泳道 worktree）"
+          % (root, len(_DEMO_CARDS)))
+    print("    git=%s；底仓未配任何远端=物理不联网" % (ver or "").strip())
+    return "临时底仓+临时账根+2 泳道 worktree 就位"
+
+
+def _demo_create(ctx):
+    for cid, lane, delivery, marker, title in _DEMO_CARDS:
+        rc, out, err = _demo_cli(ctx["ledger"], ctx["ccd"], [
+            "create", cid, "--title", title,
+            "--verify", "grep -q %s %s" % (marker, delivery),
+            "--files", delivery, "--lanes", lane, "--type", "REQ",
+            # 三段式+判据三要素+type 带全=立卡三口闸 enforce 生效日到了演示照跑绿（T4 前瞻锁）
+            "--src", "cc demo 内置演示数据（REQ-CC-DEMO-1，非业务账）",
+            "--story", "新用户装完跑一条命令看立卡→泳道并行→机器验收全链真实运行",
+            "--plan", "双泳道并发 claim/beat/commit/done，合入后 verdict 复跑判据",
+            "--c-op", "grep 交付标记 " + marker,
+            "--c-in", "泳道交付文件 " + delivery,
+            "--c-expect", "文件在场且含标记=退出码 0",
+        ], cwd=ctx["repo"])
+        if rc or (cid + " OPEN") not in out:
+            raise _DemoFail("立卡", "%s rc=%s｜%s" % (cid, rc, (out + err).strip()[-240:]))
+        print("    %s → OPEN（判据=「grep -q %s %s」；立卡试跑 %s）" % (
+            cid, marker, delivery,
+            "首红 R2 豁免放行（产物未落盘=预期态）" if ("R2" in out or "red-first" in out) else "rc=0 直绿"))
+    return "%d 张演示卡 OPEN（发卡即考试：判据试跑过了才立得住）" % len(_DEMO_CARDS)
+
+
+def _demo_lanes(ctx):
+    script = os.path.join(ctx["root"], "lane_worker.py")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(_DEMO_LANE_SCRIPT)
+    procs = []
+    for cid, lane, delivery, marker, _t in _DEMO_CARDS:
+        wt = os.path.join(ctx["root"], "wf-" + lane)
+        env = dict(os.environ, CC_TEAM_HOME=ctx["ledger"], CC_DEMO_CCD=ctx["ccd"],
+                   CC_AUTO_VERIFY="1")
+        p = subprocess.Popen([sys.executable, "-I", script, lane, cid, delivery, marker, wt],
+                             env=env, cwd=wt, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace",
+                             creationflags=_NO_WIN)
+        procs.append((lane, p))
+    outs, commits = {}, {}
+    for lane, p in procs:  # 两 lane 同时在飞；收流串行不影响并行语义（记账本就锁内串行）
+        try:
+            out, _ = p.communicate(timeout=180)
+        except subprocess.TimeoutExpired:
+            for _l, q in procs:
+                if q.poll() is None:
+                    q.kill()
+            raise _DemoFail("泳道并行", "%s 泳道子程超时(180s)" % lane)
+        out = out or ""
+        for ln in out.splitlines():
+            if ln.strip():
+                print("    [%s] %s" % (lane, ln.strip()))
+        rc = p.returncode
+        if rc or "LANE-OK" not in out:
+            raise _DemoFail("泳道并行", "%s rc=%s｜tail=%s" % (lane, rc, out.strip()[-240:]))
+        commits[lane] = out.split("commit=")[1].split()[0]
+        outs[lane] = out
+    ctx["commits"] = commits
+    return "%s 并发领牌+交卷，done 即 AUTO-VERIFY——未合主干=主干闸红、卡停 DONE（生产实况非故障）" % \
+        "+".join(sorted(commits))
+
+
+def _demo_merge(ctx):
+    merged = []
+    for _cid, lane, _f, _m, _t in _DEMO_CARDS:
+        rc, out = _demo_git(ctx["git"], ctx["repo"], "merge", "-q", "--no-ff", "-m",
+                            "merge(demo): %s 合入 main" % lane, lane)
+        if rc:
+            raise _DemoFail("交付合入", "merge %s rc=%s｜%s" % (lane, rc, out.strip()[-200:]))
+        merged.append(lane)
+    return "%s 已合入 main（REQ-MERGE-GATE-1：交付上主干才许落章）" % "+".join(merged)
+
+
+def _demo_accept(ctx):
+    for cid, _lane, _f, _m, _t in _DEMO_CARDS:
+        rc, out, err = _demo_cli(ctx["ledger"], ctx["ccd"],
+                                 ["verdict", cid, "PASS", "--reason", "cc demo 机器验收：判据复跑绿"],
+                                 cwd=ctx["repo"])
+        if rc or (cid + " VERIFIED") not in out:
+            raise _DemoFail("机器验收", "%s verdict rc=%s｜%s" % (cid, rc, (out + err).strip()[-240:]))
+        rc, out, err = _demo_cli(ctx["ledger"], ctx["ccd"], ["show", cid], cwd=ctx["repo"])
+        try:
+            d = json.loads(out[out.index("{"):out.rindex("}") + 1])
+        except (ValueError, IndexError):
+            raise _DemoFail("机器验收", "%s show 输出不可解析 rc=%s" % (cid, rc))
+        vr = d.get("verify_run") or {}
+        if d.get("status") != "VERIFIED" or vr.get("rc") != 0 or not (d.get("commit") or ""):
+            raise _DemoFail("机器验收", "%s 卡面终态不符：status=%s verify_run.rc=%s commit=%s"
+                            % (cid, d.get("status"), vr.get("rc"), (d.get("commit") or "")[:12]))
+        print("    %s → VERIFIED（机器复跑 rc=%s via=%s cmd_sha=%s；交付 commit=%s）" % (
+            cid, vr.get("rc"), vr.get("via") or "-", (vr.get("cmd_sha") or "")[:12],
+            (d.get("commit") or "")[:12]))
+    return "%d 张卡 verdict PASS→VERIFIED（完成=机器复跑退出码0，不是自然语言自述）" % len(_DEMO_CARDS)
+
+
+def _demo_cleanup(ctx):
+    _demo_kill_tree(ctx["root"])
+    if os.path.isdir(ctx["root"]):
+        raise _DemoFail("自毁", "沙箱未删净: %s" % ctx["root"])
+    return "沙箱已销毁，零残留（含只读 git 对象库剥权限后删净）"
+
+
+_DEMO_STAGES = {
+    "建沙箱": _demo_sandbox, "立卡": _demo_create, "泳道并行": _demo_lanes,
+    "交付合入": _demo_merge, "机器验收": _demo_accept, "自毁": _demo_cleanup,
+}
+
+
+def cmd_demo(a):
+    """cc demo —— 一次性沙箱全链演示（REQ-CC-DEMO-1）。末行契约见段头。"""
+    root = tempfile.mkdtemp(prefix="cc-demo-")
+    ctx = {"root": root}
+    try:
+        print("[cc demo] 一条命令看全链：立卡→泳道并行→机器验收（一次性沙箱；不碰真实账、不联网）")
+        for idx, name in enumerate(DEMO_STEPS, 1):
+            if a.break_at == name:
+                raise _DemoFail(name, "注入失败（--break-at 差分对口）")
+            try:
+                detail = _DEMO_STAGES[name](ctx)
+            except _DemoFail:
+                raise
+            except subprocess.TimeoutExpired as e:
+                raise _DemoFail(name, "子进程超时 %r" % (e,))
+            except Exception as e:
+                raise _DemoFail(name, repr(e))
+            print("[%d/%d] %s OK — %s" % (idx, len(DEMO_STEPS), name, detail))
+        print("DEMO_PASS")
+        return 0
+    except _DemoFail as e:
+        print("DEMO_FAIL: %s%s" % (e.step, (" — %s" % e.detail) if e.detail else ""))
+        return 1
+    finally:
+        try:
+            _demo_kill_tree(root)  # 成败必自毁（--break-at 注入红也零残留；已删净则静过）
+        except OSError:
+            pass
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="cc", description="cc-team 引擎一键面")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    ap = argparse.ArgumentParser(prog="cc", description="cc-team 引擎一键面"
+                                 "（无子命令=进交互向导 REQ-CC-WIZARD-1）")
+    # REQ-CC-WIZARD-1：`cc` 裸敲=产品入口向导；带子命令=原一键面行为逐字不变
+    sub = ap.add_subparsers(dest="cmd", required=False)
     i = sub.add_parser("init", help="生成骨架+配置模板+定时模板+自检")
     i.add_argument("--dir", default=".", help="目标仓根（默认当前目录）")
     i.add_argument("--force-config", action="store_true", help="覆盖已有 config.toml")
@@ -391,11 +725,19 @@ def main(argv=None):
     x.add_argument("--out", required=True, help="输出目录")
     x.add_argument("--force", action="store_true", help="目标非空仍导出")
     x.set_defaults(fn=cmd_export)
+    d = sub.add_parser("demo", help="一次性沙箱演示全链（立卡→泳道并行→机验→合入→自毁）；"
+                                    "末行 DEMO_PASS / DEMO_FAIL: <环节名>")
+    d.add_argument("--break-at", dest="break_at", default=None, choices=list(DEMO_STEPS),
+                   help="注入指定环节失败（差分对/彩排用；成败都自毁不残留）")
+    d.set_defaults(fn=cmd_demo)
     a = ap.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, OSError):
         pass
+    if a.cmd is None:  # REQ-CC-WIZARD-1：裸 `cc`=交互向导（提需求→方案书→确认→开工→播报）
+        from .wizard import run_wizard
+        return run_wizard()
     return a.fn(a)
 
 

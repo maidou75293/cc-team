@@ -15,6 +15,26 @@ case "$(uname -s 2>/dev/null)" in
   *) HOST_OS=linux ;;
 esac
 
+# ===== REQ-OSS-MACOS-PORT-1（2026-11-04 第七圈 macOS 实锤）：核心utils宿主中性 =====
+# `touch -d "N minutes ago"` 是 GNU coreutils 专属形——BSD touch（macOS）只有 -t，第七圈
+# run 41816330476 全部时间回拨夹具静默落空（mtime 仍=now），孤儿锁/空目录/recycle/lane/
+# 笔记闸门/83/89/展示行/态B 连片 20+ 红的主成因。改 python os.utime：POSIX API 三宿主同源。
+ago(){ python3 - "$1" "$2" <<'PYEOF'
+import os, sys, time
+t = time.time() - float(sys.argv[2])
+os.utime(sys.argv[1], (t, t))
+PYEOF
+}
+# `timeout` 同为 GNU 件（macOS 无此令，实测 command not found）——后台闹钟兜底：到时未退
+# 即杀，语义与 timeout N 等价（调用方只验输出不消费超时 rc）。
+to(){ local t=$1; shift; "$@" & local p=$! n=0
+  while kill -0 $p 2>/dev/null; do
+    if [ "$n" -ge "$t" ]; then kill $p 2>/dev/null; break; fi
+    n=$((n+1)); sleep 1
+  done
+  wait $p 2>/dev/null
+}
+
 # 套件自净化：worker 会话由 run-cc.ps1 注入 CC_AUTO_VERIFY=1，泄漏进套件会让 done 即转
 # VERIFIED——#5 verdict 族/#71「开关不启=旧语义」连锁假红（2026-11-03 Windows 侧实锤）。
 # 真要测开关语义的段（#71/#75/#91）各自行内 env 钉死，本行只清会话污染。
@@ -250,14 +270,14 @@ g = json.load(open(gp, encoding="utf-8")); g["cards"]["0139"]["verify"] = ""
 json.dump(g, open(gp, "w", encoding="utf-8"))   # MECH-PURE1: 事实只有 graph 一端，镜像同改通道已退役
 PYEOF
 expect_fail claim 0139 --owner m13           # 裸改坏卡无判据仍不可领（claim 闸门不只靠 set）
-touch -d "30 minutes ago" $CC_TEAM_HOME/claims/0131/claim.json
+ago $CC_TEAM_HOME/claims/0131/claim.json 1800
 $CARD claim 0131 --owner m13 >/dev/null 2>$ST_TMP/heal.err && grep -q "孤儿锁" $ST_TMP/heal.err && ok "崩溃孤儿锁自愈(可读陈旧claim.json)" || bad "孤儿锁自愈"
 
 # 15 并发领同卡：6轮恰好每轮一个赢家；mkdir后未写完 claim.json 的【写入窗口活锁】不可被抢【修 F6c】
 $CARD create 0133 --title t --verify "true" >/dev/null
 mkdir -p $CC_TEAM_HOME/claims/0133
 $CARD claim 0133 --owner m16 >/dev/null 2>&1 && bad "写入窗口空锁被抢(F6c回归)" || ok "mkdir后正写的空目录不当孤儿抢(写入窗口保护)"
-touch -d "30 minutes ago" $CC_TEAM_HOME/claims/0133
+ago $CC_TEAM_HOME/claims/0133 1800
 $CARD claim 0133 --owner m16 >/dev/null 2>$ST_TMP/heal2.err && grep -q "孤儿锁" $ST_TMP/heal2.err && ok "空目录崩溃残渣按目录mtime自愈" || bad "空目录残渣自愈"
 rbad=0
 for r in 1 2 3 4 5 6; do
@@ -278,7 +298,7 @@ printf '{"owner":"rel1","pid":4242,"ts":"2026-10-30T00:00:00+0800"}' > $CC_TEAM_
 $CARD create 0132 --title t --verify "true" >/dev/null
 # MECH-R3：回收只认 lane 锁。MECH-PURE1 后夹具=v3 原生形态：claim --pid 自建道锁（kind=lane）
 $CARD claim 0132 --owner m14 --pid 999999 >/dev/null
-touch -d "20 minutes ago" $CC_TEAM_HOME/claims/0132/claim.json
+ago $CC_TEAM_HOME/claims/0132/claim.json 1200
 python3 $CODE_CC/ops/recycle.py --dry > $ST_TMP/rec.out 2>&1
 grep -q "ZOMBIE 0132" $ST_TMP/rec.out && grep -q "STALE 0150" $ST_TMP/rec.out \
   && [ -d $CC_TEAM_HOME/claims/0132 ] && gcard 0132 | grep -q '"status": "CLAIMED"' \
@@ -294,7 +314,7 @@ $CARD claim 0140 --owner m99 >/dev/null
 echo g >> backend/api/user.py && git add -A && git commit -qm "feat(0140): z"
 $CARD done 0140 --owner m99 --commit $(git rev-parse HEAD) --repo $REPO >/dev/null
 $CARD note --owner m99 --text "第一条教训" >/dev/null
-touch -d "2 hours ago" $CC_TEAM_HOME/notes/lane-m99.md
+ago $CC_TEAM_HOME/notes/lane-m99.md 7200
 python3 $CODE_CC/ops/check_exit.py --owner m99 --repo $REPO --notes $CC_TEAM_HOME/notes/lane-m99.md > $ST_TMP/note.out 2>&1; rc=$?
 [ $rc -eq 2 ] && grep -q "笔记" $ST_TMP/note.out && ok "笔记闸门真生效(block)" || bad "笔记闸门 rc=$rc"
 $CARD note --owner m99 --text "补沉淀" >/dev/null
@@ -440,12 +460,12 @@ RT=$CODE_CC/ops/recycle.py
 $CARD create 0210 --title "分诊会话卡" --verify "true" >/dev/null
 $CARD claim 0210 --owner sessA >/dev/null          # 无 lane-sessA.lock → kind=session
 grep -q '"kind": "session"' $CC_TEAM_HOME/claims/0210/claim.json && ok "claim 落 kind=session" || bad "kind 字段未落"
-touch -d "20 minutes ago" $CC_TEAM_HOME/claims/0210/claim.json
+ago $CC_TEAM_HOME/claims/0210/claim.json 1200
 python3 $RT --apply >$ST_TMP/rec3.out 2>&1
 grep -q "WARN 0210" $ST_TMP/rec3.out && gcard 0210 | grep -q '"status": "CLAIMED"' \
   && [ -d $CC_TEAM_HOME/claims/0210 ] && ! grep -q "0210 OPEN" $ST_TMP/rec3.out \
   && ok "E2E-T1 场景拦截：session 卡 apply 只 WARN 不 release" || bad "session 卡被误回收"
-touch -d "20 minutes ago" $CC_TEAM_HOME/claims/0210/claim.json
+ago $CC_TEAM_HOME/claims/0210/claim.json 1200
 python3 $RT --apply >$ST_TMP/rec4.out 2>&1
 grep -q "ALARM 0210" $ST_TMP/rec4.out && gcard 0210 | grep -q '"status": "CLAIMED"' \
   && ok "连续两轮同卡 WARN 升 ALARM 供 PM 看(仍不 release)" || bad "ALARM 升级"
@@ -454,7 +474,7 @@ grep -q "ALARM 0210" $ST_TMP/rec4.out && gcard 0210 | grep -q '"status": "CLAIME
 $CARD create 0212 --title "泳道卡" --verify "true" >/dev/null
 $CARD claim 0212 --owner l1 --pid 999998 >/dev/null          # 锚 pid 必死（WSL+Windows 双侧均无此进程），claim 自建 v3 道锁
 grep -q '"kind": "lane"' $CC_TEAM_HOME/claims/0212/claim.json && ok "lane 锁在场时 claim 落 kind=lane" || bad "kind=lane 未落"
-touch -d "20 minutes ago" $CC_TEAM_HOME/claims/0212/claim.json
+ago $CC_TEAM_HOME/claims/0212/claim.json 1200
 python3 $RT --dry >$ST_TMP/rec5.out 2>&1
 grep -q "ZOMBIE 0212" $ST_TMP/rec5.out && gcard 0212 | grep -q '"status": "CLAIMED"' \
   && ok "lane 僵尸 dry 报 ZOMBIE 不动手" || bad "lane dry"
@@ -471,7 +491,7 @@ p = os.path.join(os.environ["CC_TEAM_HOME"], "claims", "0216", "claim.json")
 d = json.load(open(p, encoding="utf-8")); d.pop("kind", None)   # 模拟 MECH-R3 前的存量 claim
 json.dump(d, open(p, "w", encoding="utf-8"))
 PYEOF
-touch -d "30 minutes ago" $CC_TEAM_HOME/claims/0216/claim.json
+ago $CC_TEAM_HOME/claims/0216/claim.json 1800
 python3 $RT --apply >$ST_TMP/rec7.out 2>&1
 grep -q "0216" $ST_TMP/rec7.out && gcard 0216 | grep -q '"status": "CLAIMED"' \
   && ok "存量无 kind 卡(无锁)不被回收，行为=warn(退回旧判据兼容)" || bad "存量兼容断裂"
@@ -730,8 +750,8 @@ import json, sys
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 assert m["kind"] == "session" and m.get("pid") in (None, 0), m
 PYEOF
-touch -d "2 hours ago" $Q/lane-pm48.lock/meta.json 2>/dev/null
-touch -d "2 hours ago" $CC_TEAM_HOME/claims/0624/claim.json 2>/dev/null
+ago $Q/lane-pm48.lock/meta.json 7200 2>/dev/null
+ago $CC_TEAM_HOME/claims/0624/claim.json 7200 2>/dev/null
 CC_TEAM_HOME=$CC_TEAM_HOME $RCY --minutes 15 2>/dev/null | grep -q "WARN 0624" && ok "session 卡只 WARN 不回收" || bad "session 卡被判回收"
 $CARD done 0624 --owner pm48 --commit $(git rev-parse HEAD) --repo $REPO --force >/dev/null 2>&1 || \
   $CARD release 0624 >/dev/null
@@ -1002,10 +1022,11 @@ grep -q "^claimed 0670 owner=pmx" $ST_TMP/w65.out \
   && grep -q "selftest 40%" $ST_TMP/w65.out && grep -q -- "--- events(tail" $ST_TMP/w65.out \
   && ok "watch 三节:在制卡+进度流+events尾" || bad "watch 缺节(见 $ST_TMP/w65.out)"
 $CARD watch --card 0670 -n 1 >$ST_TMP/w65c.out 2>&1
-C65=$(awk -F"|" '$2=="0670" && $3 !~ /->/' $ST_TMP/w65c.out | wc -l)
+# BSD wc 出数带 8 位宽填充(macOS 实测 "       1")，GNU 无——tr -d ' ' 后两宿主同形
+C65=$(awk -F"|" '$2=="0670" && $3 !~ /->/' $ST_TMP/w65c.out | wc -l | tr -d ' ')
 [ "$C65" = "1" ] && ok "watch --card -n 1 过滤生效" || bad "watch 过滤失效(命中 $C65 行)"
 ( sleep 1; $CARD progress 0670 "followed-line" >/dev/null 2>&1 ) &
-timeout 15 $CARD watch --follow --ticks 5 --interval 1 >$ST_TMP/w65f.out 2>&1
+to 15 $CARD watch --follow --ticks 5 --interval 1 >$ST_TMP/w65f.out 2>&1
 grep -q "followed-line" $ST_TMP/w65f.out && ok "watch --follow 流式出新行" || bad "follow 不追新"
 wait
 
@@ -1044,11 +1065,11 @@ rm -rf $P && $CARD panel --out $CC_TEAM_HOME/state/panel2.html >/dev/null 2>&1 \
 #    键里无"静默<n>min"动态值（修复前每 10min 一个新键=打地鼠 ack，同题聚合失效）
 $CARD create 0677 --title KEY --verify "true" >/dev/null
 $CARD claim 0677 --owner k67 >/dev/null
-touch -d "20 minutes ago" $CC_TEAM_HOME/claims/0677/claim.json
+ago $CC_TEAM_HOME/claims/0677/claim.json 1200
 python3 $SR/ops/recycle.py --apply >$ST_TMP/k1.out 2>&1
-touch -d "21 minutes ago" $CC_TEAM_HOME/claims/0677/claim.json
+ago $CC_TEAM_HOME/claims/0677/claim.json 1260
 python3 $SR/ops/recycle.py --apply >$ST_TMP/k2.out 2>&1
-touch -d "22 minutes ago" $CC_TEAM_HOME/claims/0677/claim.json
+ago $CC_TEAM_HOME/claims/0677/claim.json 1320
 python3 $SR/ops/recycle.py --apply >$ST_TMP/k3.out 2>&1
 grep -q "ALARM 0677" $ST_TMP/k3.out && grep -q "22min\|21min" $ST_TMP/k3.out \
   && ok "stdout 给人看带实时分钟" || bad "展示行丢了动态值(过度稳定)"
@@ -1264,7 +1285,7 @@ else
   C76 create N76A --title "活锚断流" --lanes n76a --verify "true" >/dev/null
   C76 claim N76A --owner n76a --pid "$CMDPID" --pid-ns win >/dev/null
   grep -qE '"pid": *[1-9]' "$T76/claims/N76A/claim.json" && grep -q '"pid_ns"' "$T76/claims/N76A/claim.json"     && ok "76 留档字段照记 pid/pid_ns(④退役≠删审计面)" || bad "76 留档字段丢了(退役把排障面一并删了)"
-  touch -d "20 minutes ago" "$T76/claims/N76A/claim.json"
+  ago "$T76/claims/N76A/claim.json" 1200
   R76 --apply >$ST_TMP/r76a.out 2>&1
   g76 N76A | grep -q '"status": "OPEN"'     && ok "76 活 pid≠活：断流即收(名牌制：进程号退出判活)" || { bad "76 活 pid 装活=断流不回收未落地"; tail -3 $ST_TMP/r76a.out; }
   # ③ 死 pid + 活续写流 → 不动（防「判活顺手又杀进程表」）
@@ -1591,12 +1612,12 @@ import json, os, sys
 json.dump(dict(owner="r72a", pid=None, kind="lane", ts="2026-11-01T00:00:00+0800"),
           open(os.path.join(sys.argv[1], "meta.json"), "w", encoding="utf-8"))
 PYEOF
-touch -d "10 minutes ago" $Q/lane-r72a.lock/meta.json
+ago $Q/lane-r72a.lock/meta.json 600
 $CARD claim 0720 --owner r72a >/dev/null   # 道锁在场(过期残渣)→占位抢锁→kind=lane 而锚无 pid
 grep -q '"kind": "lane"' $CC_TEAM_HOME/claims/0720/claim.json \
   && ! grep -Eq '"pid": *[1-9]' $CC_TEAM_HOME/claims/0720/claim.json \
   && ok "83 夹具成形: lane 锁+无锚 pid(旧 claim 未传 --pid 的实况)" || bad "83 夹具未落 lane 无锚形(用例失去意义)"
-touch -d "20 minutes ago" $CC_TEAM_HOME/claims/0720/claim.json   # 名牌制阈=--minutes 默认 15
+ago $CC_TEAM_HOME/claims/0720/claim.json 1200   # 名牌制阈=--minutes 默认 15
 python3 "$SELF_CC/ops/recycle.py" --dry >$ST_TMP/rec72.out 2>&1
 grep -q "ZOMBIE 0720" $ST_TMP/rec72.out && gcard 0720 | grep -q '"status": "CLAIMED"' \
   && ok "83 断流超窗 dry 报 ZOMBIE 不动手(名牌制：无进度流+静默20min)" || bad "83 无锚过期锁未判可回收(旧行为=只能喊PM)"
@@ -1610,7 +1631,7 @@ import json, os, sys
 json.dump(dict(owner="r72b", pid=None, kind="lane", ts="2026-11-01T00:00:00+0800"),
           open(os.path.join(sys.argv[1], "meta.json"), "w", encoding="utf-8"))
 PYEOF
-touch -d "10 minutes ago" $Q/lane-r72b.lock/meta.json
+ago $Q/lane-r72b.lock/meta.json 600
 $CARD claim 0721 --owner r72b >/dev/null    # 抢旧锁后新锁新鲜（claim 落账即静默归零）
 python3 "$SELF_CC/ops/recycle.py" --dry >$ST_TMP/rec72c.out 2>&1
 grep -q "ALIVE 0721" $ST_TMP/rec72c.out && ! grep -q "ZOMBIE 0721" $ST_TMP/rec72c.out \
@@ -2109,10 +2130,10 @@ PYEOF
   local d89; d89="$(tp89 "$lane")"
   mkdir -p "$d89"
   echo '{"type":"assistant"}' > "$d89/s.jsonl"
-  [ "$jmin" != fresh ] && touch -d "$jmin minutes ago" "$d89/s.jsonl"
+  [ "$jmin" != fresh ] && ago "$d89/s.jsonl" $((jmin*60))
   mkdir -p "$S89C/wf-$lane"
   echo w > "$S89C/wf-$lane/f.txt"
-  [ "$tmin" != fresh ] && touch -d "$tmin minutes ago" "$S89C/wf-$lane/f.txt"
+  [ "$tmin" != fresh ] && ago "$S89C/wf-$lane/f.txt" $((tmin*60))
 }
 rec89(){ CC_TEAM_HOME=$T89 DISPATCH_PROJ=$S89P DISPATCH_CODE_ROOT=$S89C CARD_SILENCE_RELEASE_MIN=${S89THR:-45} \
   python3 "$SELF89/ops/recycle.py" "$@"; }
@@ -2154,7 +2175,7 @@ rec89 --apply >$ST_TMP/s89e.out 2>&1
 grep -q "CONT LS89E" $ST_TMP/s89e.out && grep -q "progress 龄" $ST_TMP/s89e.out && [ "$(gc89 LS89E)" = "CLAIMED" ] \
   && ok "89 progress 在账新鲜→放行（BEAT 优先源）" || { bad "89 progress 新鲜未放行"; tail -6 $ST_TMP/s89e.out; }
 mk89 f LS89F s89f 60 fresh 60 || T89=$ST_TMP/cc-sil89-f
-echo "$(date -d '60 minutes ago' +%Y-%m-%dT%H:%M:%S%z)|LS89F|pm89|陈旧名牌" >> $T89/state/progress.log
+echo "$(python3 -c 'from datetime import datetime, timedelta; print((datetime.now().astimezone()-timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%S%z"))')|LS89F|pm89|陈旧名牌" >> $T89/state/progress.log
 rec89 --apply >$ST_TMP/s89f.out 2>&1
 [ "$(gc89 LS89F)" = "OPEN" ] && grep -q "progress 龄60min" $ST_TMP/s89f.out \
   && ok "89 progress 在账即优先——陈旧 detach，jsonl 新鲜不救（双源仅在缺 progress 时说话）" || { bad "89 progress 优先序失效"; tail -6 $ST_TMP/s89f.out; }

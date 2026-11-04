@@ -21,6 +21,7 @@ ccards/panel.py
 ccards/progress.py
 ccards/retire.py
 ccards/statemachine.py
+ccards/wizard.py
 deploy/launchd/com.cc.ctrld.plist
 deploy/systemd/cc-ctrld.service
 ops/archive_events.sh
@@ -57,6 +58,8 @@ tests/boot_bringup_register.sh
 tests/boot_check.sh
 tests/card-3form-test.py
 tests/card-type-gate-test.py
+tests/cc-demo-test.py
+tests/cc-wizard-test.py
 tests/cc_env_detect_test.py
 tests/claim-counter-test.py
 tests/ctrld-ringstall-test.py
@@ -70,8 +73,10 @@ tests/guard-vis-board-test.py
 tests/guard-watch-test.py
 tests/guard-watch-utf8-print-test.py
 tests/lane-book-test.py
+tests/macos-portability-test.py
 tests/merge-train-check.py
 tests/no-window-test.py
+tests/oss-competitor-cmp-test.py
 tests/oss-release-check.py
 tests/panel_dom_check.mjs
 tests/pid_alive_test.py

@@ -25,6 +25,16 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) _winfmt=1;;
   *) _winfmt=0;;
 esac
+# REQ-OSS-MACOS-PORT-1（macOS 移植）：GNU 专属 coreutils 件宿主中性化——
+# ①`touch -d "N ago"` BSD touch 无 -d（M4 态B 笔记回拨夹具第七圈 macOS 实锤红），
+#   改 python os.utime（POSIX API 三宿主同形）；②`sed -i` BSD 强制要备份后缀，
+#   裸 -i 在 macOS 把脚本串当后缀报错，改 tmp+mv（两宿主行为一致的通用 POSIX 形）。
+ago(){ python3 - "$1" "$2" <<'PYEOF'
+import os, sys, time
+t = time.time() - float(sys.argv[2])
+os.utime(sys.argv[1], (t, t))
+PYEOF
+}
 if [ -n "${CC_CODE_HOME:-}" ]; then
   CODE_HOME="$CC_CODE_HOME"
   N="$CODE_HOME/cc-team"; [ -d "$N" ] || N="$CODE_HOME"
@@ -196,7 +206,7 @@ $CARD dag --refresh >/dev/null 2>&1   # 强制重封（恢复 c 是裸改，dige
 printf 'garbage line without pipes\n' >> $CC_TEAM_HOME/state/events.log
 out=$(python3 $N/ops/reconcile_events.py 2>&1); rc=$?
 echo "$out" | grep -q "畸形行" && [ $rc -eq 0 ] && ok "畸形行 WARN 不崩不ALARM" || bad "畸形行处理 rc=$rc :: $(echo "$out" | grep -E "ALARM|损坏|不可信" | head -2)"
-sed -i '/garbage line/d' $CC_TEAM_HOME/state/events.log
+sed '/garbage line/d' $CC_TEAM_HOME/state/events.log > $CC_TEAM_HOME/state/events.log.sedtmp && mv $CC_TEAM_HOME/state/events.log.sedtmp $CC_TEAM_HOME/state/events.log
 
 echo "===== M4 check-exit 两态 ====="
 # 态A：名下 DONE 未验收、notes 文件不存在 → block 点名"不存在"
@@ -209,7 +219,7 @@ git checkout -q -b featoff
 echo z >> src/a.py && git add -A && git commit -qm "feat($c): off"; CB=$(git rev-parse HEAD)
 $CARD done $c --owner o_$c --commit $CB --repo $ADR >/dev/null
 git checkout -q master && git branch -q -D featoff
-touch $CC_TEAM_HOME/notes/lane-o_$c.md && touch -d "2 hours ago" $CC_TEAM_HOME/notes/lane-o_$c.md
+touch $CC_TEAM_HOME/notes/lane-o_$c.md && ago $CC_TEAM_HOME/notes/lane-o_$c.md 7200
 out=$(python3 $N/ops/check_exit.py --owner o_$c --repo $ADR --notes $CC_TEAM_HOME/notes/lane-o_$c.md 2>&1); rc=$?
 echo "$out" | grep -q Traceback && bad "态B炸栈" || ok "态B不崩"
 [ $rc -eq 2 ] && echo "$out" | grep -q "晚于笔记" && ok "态B 分支外commit仍解析并拦截(卡DONE未验收)" || bad "态B rc=$rc :: $out"
