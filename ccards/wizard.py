@@ -555,12 +555,20 @@ def run_demo(out=print):
                  '    "warranty.txt": "整机保修 12 个月，电池等耗材保修 6 个月。",\n'
                  '}\n')
         _ANSWER_WIP = ('# 半成品：检索可用但未按卡面要求内嵌自检标记——判据就是判据，不口头达标\n'
+                       'import re\n'
+                       '\n'
                        'from demo_docs import DOCS\n'
                        '\n'
                        '\n'
                        'def answer(question):\n'
+                       '    q = re.sub(r"[？?。！!吗的了呢啊]", " ", question)\n'
+                       '    toks = set()\n'
+                       '    for seg in q.split():\n'
+                       '        toks.add(seg)\n'
+                       '        for i in range(len(seg) - 1):\n'
+                       '            toks.add(seg[i:i + 2])\n'
                        '    for src, text in DOCS.items():\n'
-                       '        for kw in question.replace("？", " ").replace("吗", " ").replace("的", " ").split():\n'
+                       '        for kw in sorted(toks, key=len, reverse=True):\n'
                        '            if kw and kw in text:\n'
                        '                return text, src\n'
                        '    return "库内暂无匹配文档，建议补充后再问。", "-"\n')
@@ -614,23 +622,29 @@ def run_demo(out=print):
         statuses = {cid: ledger.cards().get(cid, {}).get("status") for cid in ids}
         out("[演示收] 三张卡终局：%s（判据红不放行=留待验；打回返工=重交转绿；全程闸都在）"
             % "，".join("%s=%s" % (k, v) for k, v in sorted(statuses.items())))
-        # 建成系统现场跑一遍（业主 23:3x「还要有创建出来的系统演示」）：真起子进程跑
-        # 合入主干的代码——答复与出处就是泳道写进去的那份文件，不是渲染好的画面。
-        out("—— 建成的系统现场跑一遍（真起进程跑主干代码）——")
-        app_rc, app_lines = -1, []
-        try:
-            pr = subprocess.run([sys.executable, "demo_app.py", "退货的期限是几天？"],
-                                cwd=repo, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=60,
-                                creationflags=NO_WIN)
-            app_rc = pr.returncode
-            app_lines = [ln.strip() for ln in (pr.stdout or "").splitlines() if ln.strip()]
-        except Exception as e:
-            out("[演示异常] 系统演示起进程失败：%r" % (e,))
-        for ln in app_lines:
-            out("[系统演示] " + ln)
-        if app_rc != 0 or not app_lines:
-            out("[演示异常] 系统演示退出码=%s——建不起来的东西不配叫闭环" % app_rc)
+        # 建成系统现场跑一遍（业主 23:3x「还要有创建出来的系统演示」+次日头一轮反馈「演示呢？」
+        # ——加厚：连问两题，两题都答得出=系统是真跑的不是摆的；答复与出处=泳道写进主干的代码）
+        out("—— 建成的系统现场跑一遍（真起进程跑主干代码，连问两题）——")
+        bad = 0
+        for q in ("退货的期限是几天？", "电池保修多久？"):
+            app_rc, app_lines = -1, []
+            try:
+                pr = subprocess.run([sys.executable, "demo_app.py", q],
+                                    cwd=repo, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=60,
+                                    creationflags=NO_WIN)
+                app_rc = pr.returncode
+                app_lines = [ln.strip() for ln in (pr.stdout or "").splitlines() if ln.strip()]
+            except Exception as e:
+                out("[演示异常] 系统演示起进程失败：%r" % (e,))
+            out("[系统演示] 问：" + q)
+            for ln in app_lines:
+                out("[系统演示] " + ln)
+            if app_rc != 0 or not app_lines:
+                bad += 1
+                out("[演示异常] 系统演示退出码=%s——建不起来的东西不配叫闭环" % app_rc)
+        if bad:
+            return {"error": "app-demo", "ids": ids, "statuses": statuses}
         out("—— 沙箱演示结束（临时账销毁；主干分支=%s）——" % branch)
         return {"skipped": None, "ids": ids, "statuses": statuses, "transcript_team": team}
     finally:
