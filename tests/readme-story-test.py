@@ -8,9 +8,10 @@
 #   T1 头引图：全文第一个被引用的图片必须是 demo.gif，且位于第一个二级标题之前（置顶）；
 #   T2 动画本体：demo.gif 存在、魔数 GIF89a、帧数≥10、体积<8MB（业主 11-04 22:1x 打回补画面后
 #      放宽上限；重录变大/退化仍即红）；
-#   T2c 画面构成（R3 定稿）：GIF 注释扩展块内 SCENES 清单必须点名 init/dialog/gate_red/rework/green
-#      五段过程拍且各≥1 帧、board=0（无看板画面），TOTAL 与逐块实数帧数一致——缺任何一拍
-#      （尤其「判据红不放行」「打回返工」两拍＝业主点名要看的「过程」）即红；
+#   T2c 画面构成（R3 定稿+R4 补「建成系统演示」业主 23:3x）：GIF 注释扩展块内 SCENES 清单
+#      必须点名 init/dialog/gate_red/rework/green/app_demo 六段过程拍且各≥1 帧、board=0
+#      （无看板画面），TOTAL 与逐块实数帧数一致——缺任何一拍（尤其「判据红不放行」「打回返工」
+#      「系统现场问答」三拍＝业主点名要看的「过程」）即红；
 #   T3 真实来源标注：图引用行 ±2 行窗口内含「沙箱/SANDBOX」与「加速/accelerated」两标，
 #      且同窗点名「对话框」（单窗叙事）与「返工」（过程主角落文案），图注窗口出现「看板」=红
 #      （业主 23:0x「先不管看板」），正文另提及 `cc demo`（复跑对照入口，禁摆拍凭据）；
@@ -178,7 +179,7 @@ def t2c():
     if not cm:
         return bad("T2c 画面构成", "GIF 注释扩展块无 SCENES 清单（渲染端未落画面凭据）")
     man = cm[0]
-    need = ("init", "dialog", "gate_red", "rework", "green")
+    need = ("init", "dialog", "gate_red", "rework", "green", "app_demo")
     counts, miss = {}, []
     for k in need:
         m = re.search(r"\b%s=(\d+)" % k, man)
@@ -187,10 +188,10 @@ def t2c():
         else:
             counts[k] = int(m.group(1))
     if miss:
-        bad("T2c 画面构成", "缺过程拍 %s｜清单=%s（要求 装机自检/对话/判据红不放行/打回返工/验收绿 各≥1 帧）"
+        bad("T2c 画面构成", "缺过程拍 %s｜清单=%s（要求 装机自检/对话/判据红不放行/打回返工/验收绿/建成系统现场跑 各≥1 帧）"
             % (",".join(miss), man))
     else:
-        ok("T2c 五段过程拍齐备 %s" % man)
+        ok("T2c 六段过程拍齐备 %s" % man)
     mb = re.search(r"\bboard=(\d+)", man)
     ok("T2c 单对话框无看板（board=0 在册）") if (mb and mb.group(1) == "0") \
         else bad("T2c 画面构成", "board 清单缺位或≠0（业主 23:0x 定稿=对话框外画面不许进）｜%s" % man)

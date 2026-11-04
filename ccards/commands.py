@@ -11,7 +11,7 @@ from .locks import (lane_beat_read, lane_beat_write, lane_epoch_advance, lane_ep
                     lane_lock_acquire, lane_lock_dir, lane_lock_read, lane_lock_release,
                     lane_q_drop_everywhere, lane_q_pop, lane_q_push, lane_queue_lines,
                     lock_claim, team_lock_acquire, team_lock_release)
-from .config import FINISHED, _session_from_env, REJECTS, setting
+from .config import FINISHED, _session_from_env, REJECTS, num_setting, setting
 # MECH-STATE-STD-1：状态迁移唯一数据表（迁移矩阵）——各命令写状态前过 require_edge=同源闸，
 # 表义见 ccards/statemachine.py（术语/属主/必填字段/矩阵的单一事实源，README 与 selftest 同读）。
 from .statemachine import require_edge
@@ -1065,6 +1065,54 @@ def bump_count(cid, field, cmd="bump"):
     return n
 
 
+# ── BUG-REJECT-STOPLOSS-1（业主 seq=30「下一次REJECT后不再重派（STOPLOSS标记上卡面）」+
+#    seq=35「STOPLOSS=第2拒即停」）· 同卡连拒止血，落在 reject 写路径内，不托孤给报警认领链 ──
+# 病根（BUG-VECMEM-STALE-1 九连拒 6 槽翻台实锤）：旧通道只有 alerts.record(REJECT-THRESHOLD)
+# 零处置，而报警键 ~20min 被机器到期销账、早于 fuse S6 一级唤 PM 阈 FUSE_ALERT_ACK1_MIN=30min
+# ——升级环从未闭环，业主「第2拒即停」空转。止血与 REJECT 同笔写锁事务落账：连拒达阈即在
+# 账上 release(拒通道已含·留 HANDOVER 不清工作区)+set HOLD，hold 带 STOPLOSS:gate 前缀+归因
+# 一句话；停派闸复用既有同源语义（cmd_claim 挂失闸 / engine._stoploss / fuse S2 同族）。
+# 报警键照挂供看板（④上报阈 >REJECT_CARD_MAX 语义不动），其销账/认领与否不再承载止血。
+REJECT_STOPLOSS_DEF = 2  # 业主定版「第2拒即停」；env REJECT_STOPLOSS_MAX 可配（下限 1）
+
+
+def _reject_stoploss_max():
+    """止血阈：env REJECT_STOPLOSS_MAX > 配置文件 gates.reject_stoploss_max > 默认 2。
+    下限 1——0 不表示「停用」（防手滑 0 造全员误停），停用档由 NOACT 撤闸开关明示。"""
+    return int(num_setting("gates.reject_stoploss_max", env="REJECT_STOPLOSS_MAX",
+                           default=REJECT_STOPLOSS_DEF, minimum=1))
+
+
+def _reject_stoploss_noact():
+    """撤闸红检缝（BUG-REJECT-STOPLOSS-1 验收③）：REJECT_STOPLOSS_NOACT=1/true/on/yes 时
+    止血整段空转（只报不救），与 fuse FUSE_NOACT 同式——测试差分对靠它验证断言红得起来。"""
+    return str(os.environ.get("REJECT_STOPLOSS_NOACT") or "").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _reject_stoploss(c, rn, note):
+    """reject 落账通道内的原子止血（调用方必须已持账本写锁，与 reject 落账同一次 save）。
+    返回刚落笔的 hold 文案=止血已发生；None=不触（未达阈/卡面已挂 STOPLOSS 不双写/撤闸档）。
+    本通道进入时卡面恒为 OPEN（DONE/VERIFIED→OPEN 由 REJECT 分支刚完成，release 语义已含、
+    HANDOVER 已由 _handover_out 留驻不清工作区）；若未来接在制(CLAIMED)卡的新通道，必须先
+    走 release 带交接再调本函数（同 fuse seg_s2 do_stoploss 口径），此处宁可不触不造假。"""
+    if rn < _reject_stoploss_max():
+        return None
+    if "STOPLOSS" in str(c.get("hold") or ""):
+        return None  # 已挂失（STOPLOSS:gate 或 fuse 写停的 :fuse）——归因撤闸前不双写
+    if _reject_stoploss_noact():
+        return None  # 撤闸档：只报不救（差分对红检位）
+    if c["status"] != "OPEN":
+        return None  # 见 docstring：非 OPEN 通道未接，宁不触不造假
+    require_edge("OPEN", "HOLD", "set")  # 同源闸：复用 set 通道合法边（本函数=机件版 set，
+    # 痕 actor=gate 不伪装 PM 真人痕拨静默钟——requirement ⑤）
+    hold = ("STOPLOSS:gate 同卡累计第%d拒≥阈%d(业主定版第2拒即停)自动止血停复派——%s；"
+            "等 PM 归因，撤闸=set --hold ''" % (rn, _reject_stoploss_max(), note))
+    c["hold"] = hold
+    c["status"] = "HOLD"
+    return hold
+
+
 def cmd_claim(a):
     c = load(a.id)
     if c["status"] != "OPEN":
@@ -1647,16 +1695,36 @@ def cmd_verdict(a):
             shutil.rmtree(claim_dir(c["id"]), ignore_errors=True)
             ho_n, ho_ep = _handover_out(c, prev_owner)  # REJECT 打回同走交接环（seq=15 第2条）
             lane_lock_release(prev_owner, c["id"])
-            _requeue_card(c, prev_owner)  # REJECT 重做优先回队头（按卡面 lanes，不看旧 owner——实锤根因）
             c["verdict"] = a.result + ((" | " + a.reason) if a.reason else "") + " | by=" + role
             if role == "PM":
                 c["verdict"] += "（PM兼验，未独立复核，待验）"
             rn = _bump(c, "reject_count")  # R5b（seq=30）打回计数：与 R1 同一机件（本锁内递增，随 save 同笔落账）
+            # BUG-REJECT-STOPLOSS-1（业主 seq=30/35「第2拒即停」）：止血与拒落账同事务原子——
+            # 不再托孤给「报警键→fuse-S6 认领升级」链（键 ~20min 被机器销账早于 30min 唤 PM 阈，
+            # 该链实锤从未闭环=九连拒空转的病根）。hold 文案带归因一句话，卡面直读。
+            # 调用行整行单句=tests/reject-stoploss-test.py 撤闸差分对的注入靶（禁折行）。
+            sl_note = "末拒by=%s reason=%s" % (role, _san(a.reason)[:60] if a.reason else "-")
+            sl_hold = _reject_stoploss(c, rn, sl_note)
+            if "STOPLOSS" not in str(c.get("hold") or ""):
+                # 未挂失才回队头（挂失卡不入调度，队列残渣由 reindex「队列只收 OPEN」规则清）；
+                # REJECT 重做优先回队头（按卡面 lanes，不看旧 owner——实锤根因 BUG-LANES-STALE-1）
+                _requeue_card(c, prev_owner)
             save(c)
             event(c["id"], old, "OPEN", "PM" if role == "PM" else "verifier", a.result)
+            if sl_hold:
+                # 止血痕 actor=gate（机制方）+ self=gate 尾标：对齐 fuse last_pm_action_ts 剔除
+                # 口径，机件自触发不得拨 PM 静默钟（BUG-FUSE-SNIFF/S5-SNIFF 同族纪律，防自骗）
+                event(c["id"], "OPEN", "HOLD", "gate",
+                      "REJECT-STOPLOSS reject_count=%d≥阈%d 已release(留HANDOVER)+HOLD停复派"
+                      "等PM归因 self=gate" % (rn, _reject_stoploss_max()))
             if rn > REJECT_CARD_MAX:  # R5b 同卡超阈（第 REJECT_CARD_MAX+1 拒触发）→ alerts 落键走 fuse-S6 既有升级闭环直达业主；键名非业主/FUSE-S6 头
                 from . import alerts
-                alerts.record("REJECT-THRESHOLD card=%s reject_count=%d>%d" % (c["id"], rn, REJECT_CARD_MAX))
+                # BUG-REJECT-STOPLOSS-1 ④：上报阈(>2)与键主体文案不动，仅追加止血说明——
+                # 认领/销账与否不影响「止血已发生」这一已在账事实
+                alerts.record("REJECT-THRESHOLD card=%s reject_count=%d>%d%s" % (
+                    c["id"], rn, REJECT_CARD_MAX,
+                    " stoploss=止血已落HOLD(不依赖认领链)"
+                    if "STOPLOSS" in str(c.get("hold") or "") else ""))
             if ho_n:
                 event(c["id"], "OPEN", "OPEN", "PM" if role == "PM" else "verifier",
                       "HANDOVER-OUT e%s by=%s n=%d" % (ho_ep, prev_owner, ho_n))

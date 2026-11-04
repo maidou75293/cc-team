@@ -87,6 +87,7 @@ tests/readme-story-test.py
 tests/recon-tailrace-test.py
 tests/reconcile-tombstone-test.py
 tests/recycle_guard_test.py
+tests/reject-stoploss-test.py
 tests/resident-watch-test.py
 tests/resident_roster_check.py
 tests/runcc-anchor-test.py

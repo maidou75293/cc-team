@@ -478,7 +478,8 @@ def _stage_commit(repo, fname, content):
 
 def run_demo(out=print):
     """全链沙箱演示（README「三分钟现场」的可感版）：临时 team + 临时 git 仓，
-    立卡 3 张后模拟工人：#1 交卷判据绿→验收绿；#2 判据红→不放行留待验；#3 验收后被抽查打回→返工重交转绿。
+    立卡 3 张后模拟工人：#1 交卷判据绿→验收绿；#2 判据红→不放行留待验；#3 验收后被抽查打回→返工重交转绿；
+    终局后把三张泳道交付物组成的「文档问答」小系统真起进程现场跑一遍（业主 23:3x：要有建成的系统演示）。
     演示永远走手填模板（不依赖也不计费外接 agent）；结束销毁沙箱，正账零接触。"""
     tmp = tempfile.mkdtemp(prefix="cc-wizard-demo-")
     team = os.path.join(tmp, "team")
@@ -503,18 +504,21 @@ def run_demo(out=print):
         out("—— 沙箱演示开始（临时账 %s；你的仓库零改动）——" % team)
         # 判据形=仓内相对产物 grep（red-first：立卡时产物未落盘=判据点名缺失文件，
         # 卡面 --files 申报=R2 豁免在册，同 README 三分钟现场口径；闸一个不绕）
+        # 业主 23:3x「还要有创建出来的系统演示」：三张卡的交付物=一个真能跑的
+        # 「文档问答」小系统（入库/检索/入口），链尾真起进程跑主干代码问答——
+        # 判据仍 ASCII marker（grep 中文参数=双侧 OS 编码坑，见 11-02 血泪注）。
         ask = QueueAsk([
             "我要建设一个企业内部智能体",       # ②需求（业主原话示例）
             "3",                                # 模块数
-            "需求收单与方案书", "自然语言提需求，产出四栏方案书并确认", "",
-            "grep -q W1-PASS demo_w1_plan.py", "demo_w1_plan.py",
-            "以后想加需求，敲 cc 走方案书再立卡",
-            "工位派单与执行", "派单器起泳道 worker 认领卡片、写码交卷", "",
-            "grep -q W2-PASS demo_w2_report.py", "demo_w2_report.py",
-            "看板上盯每张卡的泳道与状态",
-            "验收与合流", "验收绿前置=交付已合入主干，主干即得经验收的提交", "",
-            "grep -q W3-PASS demo_w3_api.py", "demo_w3_api.py",
-            "从主干直接消费已验收的交付",
+            "文档入库与索引", "上传的文档入库、供检索", "",
+            "grep -q INDEX-OK demo_docs.py", "demo_docs.py",
+            "提问时系统自动引用库内文档",
+            "检索问答与出处", "关键词检索库内文档，答复必须带出处", "",
+            "grep -q ANSWER-OK demo_answer.py", "demo_answer.py",
+            "答案尾部就是出处文件名",
+            "命令行入口与端到端", "一条命令提问，串联入库与回答", "",
+            "grep -q E2E-OK demo_app.py", "demo_app.py",
+            "python demo_app.py \"你的问题\" 即得带出处的答复",
             "确认",                             # ④审阅=确认批量立卡
         ])
         plan, ids = run_chain(ledger, repo, ask, out=out,
@@ -544,12 +548,47 @@ def run_demo(out=print):
                                 out=out, cwd=repo)  # 判据含仓内相对路径→复跑窗钉在交付仓
             broadcast_once(team, st, None, out)
             return rc
+        # ── 小系统三件交付物（泳道各自 commit 落盘，链尾真跑=代码全部出自合入主干的提交）──
+        _DOCS = ('# INDEX-OK  演示知识库：两份企业文档内嵌（沙箱演示数据，非业务账）\n'
+                 'DOCS = {\n'
+                 '    "returns.txt": "退货期限为 30 天，保留小票即可到服务台办理。",\n'
+                 '    "warranty.txt": "整机保修 12 个月，电池等耗材保修 6 个月。",\n'
+                 '}\n')
+        _ANSWER_WIP = ('# 半成品：检索可用但未按卡面要求内嵌自检标记——判据就是判据，不口头达标\n'
+                       'from demo_docs import DOCS\n'
+                       '\n'
+                       '\n'
+                       'def answer(question):\n'
+                       '    for src, text in DOCS.items():\n'
+                       '        for kw in question.replace("？", " ").replace("吗", " ").replace("的", " ").split():\n'
+                       '            if kw and kw in text:\n'
+                       '                return text, src\n'
+                       '    return "库内暂无匹配文档，建议补充后再问。", "-"\n')
+        _APP_V1 = ('# E2E-OK  命令行入口：提问→从库内文档找答复（演示 v1）\n'
+                   'import sys\n'
+                   '\n'
+                   'from demo_answer import answer\n'
+                   '\n'
+                   'if __name__ == "__main__":\n'
+                   '    q = " ".join(sys.argv[1:]) or "退货"\n'
+                   '    text, src = answer(q)\n'
+                   '    print("答复：%s（出处：%s）" % (text, src))\n')
+        _APP_V2 = ('# E2E-OK  返工：答复与出处按输出规范分行，并标注口径版本 v2\n'
+                   'import sys\n'
+                   '\n'
+                   'from demo_answer import answer\n'
+                   '\n'
+                   'if __name__ == "__main__":\n'
+                   '    q = " ".join(sys.argv[1:]) or "退货"\n'
+                   '    text, src = answer(q)\n'
+                   '    print("答复：%s" % text)\n'
+                   '    print("出处：%s" % src)\n')
         e1 = worker("slot-1", ids[0])
-        c1 = _stage_commit(repo, "demo_w1_plan.py", "# 交付即达标\nW1-PASS\n")
-        ship("slot-1", ids[0], e1, c1, "demo_w1_plan.py")
+        c1 = _stage_commit(repo, "demo_docs.py", _DOCS)
+        ship("slot-1", ids[0], e1, c1, "demo_docs.py")
         e2 = worker("slot-2", ids[1])
-        c2 = _stage_commit(repo, "demo_w2_report.py", "# 半成品：口径没达标\nW2-TODO\n")
-        ship("slot-2", ids[1], e2, c2, "demo_w2_report.py")
+        c2 = _stage_commit(repo, "demo_answer.py", _ANSWER_WIP)
+        ship("slot-2", ids[1], e2, c2, "demo_answer.py")
         red_status = ledger.cards().get(ids[1], {}).get("status")
         if red_status != "DONE":
             out("[演示异常] 判据红的卡竟放行了（status=%s）——不放行闸失效" % red_status)
@@ -557,9 +596,10 @@ def run_demo(out=print):
             out("[判据红] %s 卡面 verify 复跑不过——不放行：卡停在『待验(DONE)』，"
                 "不盖『已验收(VERIFIED)』；返工补绿或 PM 处置才收口" % ids[1])
         e3 = worker("slot-1", ids[2])
-        c3 = _stage_commit(repo, "demo_w3_api.py", "def api():\n    return 'W3-PASS'\n")
-        ship("slot-1", ids[2], e3, c3, "demo_w3_api.py")
-        ledger.run("verdict", ids[2], "REJECT", "--reason", "演示：验收后抽查发现口径偏差，打回返工",
+        c3 = _stage_commit(repo, "demo_app.py", _APP_V1)
+        ship("slot-1", ids[2], e3, c3, "demo_app.py")
+        ledger.run("verdict", ids[2], "REJECT",
+                   "--reason", "演示：验收后抽查发现答复与出处未按规范分行（口径偏差），打回返工",
                    out=out, cwd=repo)
         broadcast_once(team, st, None, out)
         # 打回返工闭环（业主 2026-11-04 23:0x 直令「演示要有始有终」）：返工重交，验收章
@@ -568,13 +608,29 @@ def run_demo(out=print):
         if e3b is None:
             out("[演示异常] 返工重领失败——闭环缺环节")
             return {"error": "rework-claim", "ids": ids}
-        c3b = _stage_commit(repo, "demo_w3_api.py",
-                            "def api():\n    return 'W3-PASS'  # 返工：口径修正已合入\n")
-        ship("slot-1", ids[2], e3b, c3b, "demo_w3_api.py")
+        c3b = _stage_commit(repo, "demo_app.py", _APP_V2)
+        ship("slot-1", ids[2], e3b, c3b, "demo_app.py")
         out("%s [返工完成] %s 打回后返工重交——绿章=机器复跑判据通过，见上拍播报" % (STAGE5, ids[2]))
         statuses = {cid: ledger.cards().get(cid, {}).get("status") for cid in ids}
         out("[演示收] 三张卡终局：%s（判据红不放行=留待验；打回返工=重交转绿；全程闸都在）"
             % "，".join("%s=%s" % (k, v) for k, v in sorted(statuses.items())))
+        # 建成系统现场跑一遍（业主 23:3x「还要有创建出来的系统演示」）：真起子进程跑
+        # 合入主干的代码——答复与出处就是泳道写进去的那份文件，不是渲染好的画面。
+        out("—— 建成的系统现场跑一遍（真起进程跑主干代码）——")
+        app_rc, app_lines = -1, []
+        try:
+            pr = subprocess.run([sys.executable, "demo_app.py", "退货的期限是几天？"],
+                                cwd=repo, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60,
+                                creationflags=NO_WIN)
+            app_rc = pr.returncode
+            app_lines = [ln.strip() for ln in (pr.stdout or "").splitlines() if ln.strip()]
+        except Exception as e:
+            out("[演示异常] 系统演示起进程失败：%r" % (e,))
+        for ln in app_lines:
+            out("[系统演示] " + ln)
+        if app_rc != 0 or not app_lines:
+            out("[演示异常] 系统演示退出码=%s——建不起来的东西不配叫闭环" % app_rc)
         out("—— 沙箱演示结束（临时账销毁；主干分支=%s）——" % branch)
         return {"skipped": None, "ids": ids, "statuses": statuses, "transcript_team": team}
     finally:
