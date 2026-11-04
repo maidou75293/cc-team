@@ -755,6 +755,25 @@ def looks_host_mismatch(rc, out):
     return any(h in lo for h in MISMATCH_HINTS) or bool(CD_FAIL_RE.search(out or ""))
 
 
+# ==== REQ-SOP-ATTRIB-1 R2（seq=34 S3 待装）：FAIL 处置痕机读归因标签 三选一 ====
+# 病=REDAUTO FAIL 分流只产自由文本，看板/周报要按归因聚合只能啃文本。口径（业主卡面）：
+#   环境=跑不了/桥 rc=127/尾痕空/对侧不可达（looks_host_mismatch 族与 NOHOST/follow 案）；
+#   考题=判据形态病（单侧 OS 判据实证=对侧绿本机红、桥不可用而本机呈 命令/路径找不到/静默
+#        特征=疑似单侧判据/跨解释器喂错）；
+#   施工=真痕红=产品缺陷（现 mark_reject 族：双侧真痕红/本机不可达而对侧真痕红/无桥真红就地驳）。
+# **只贴标签不改刀**：分流判定、pending_sha 去重、驳回权、宁 pending 不假驳全链零改动——
+# 贴错=可见偏差可修；改判定=污染验收链（禁）。落点=events 行尾 + DONE-PENDING/REJECT 点名行
+# + 卡面（REJECT 走 verdict 文本归因节）+ 本轮 DONE-ATTRIB 归因节汇总行。
+ATTRIB_BUILD, ATTRIB_QUIZ, ATTRIB_ENV = "施工", "考题", "环境"
+ATTRIB_ENUM = (ATTRIB_BUILD, ATTRIB_QUIZ, ATTRIB_ENV)
+
+
+def _attrib_tag(attrib):
+    """处置痕尾机读字段（板端按 `attrib=` 聚合；摘此行=归因节整链退化为自由文本=T5 撤闸差分对红点）。"""
+    assert attrib in ATTRIB_ENUM, "归因标签只许三选一: %r" % (attrib,)
+    return " attrib=%s" % attrib
+
+
 def via_host():
     return "%s/%s" % (os.name, sys.platform)   # 与闸内 _run_verify 的 via 痕同式
 
@@ -928,32 +947,39 @@ def done_sweep_scan(apply_mode, hours, n_cap, run_seq):
     st = load_done_state()
     done_state_prune(st)
     n_s = n_v = n_r = n_p = 0
+    n_attr = {}   # REQ-SOP-ATTRIB-1 R2 归因节：本轮 FAIL 处置按 attrib 三值聚合计数
     for cid, c, age in stuck:
         ent = st["cards"].get(cid) or {}
         fails = int(ent.get("fails", 0) or 0)
         verify = (c.get("verify") or "").strip()
         sha = hashlib.sha1(verify.encode("utf-8")).hexdigest()[:12] if verify else "-"
 
-        def mark_pending(text):
+        def mark_pending(text, attrib):
+            # REQ-SOP-ATTRIB-1 R2：只贴标签不改刀——去重(pending_sha)/卡留 DONE/不 REJECT 语义零触碰
             nonlocal n_p
+            text = text + _attrib_tag(attrib)
             if ent.get("pending_sha") != sha:
                 ent["pending_sha"] = sha
                 note_event(cid, "DONE", "DONE", "待该侧验收: %s" % text)
             st["cards"][cid] = ent
             n_p += 1
+            n_attr[attrib] = n_attr.get(attrib, 0) + 1
             print("DONE-PENDING %s: %s → 卡留 DONE 可见、不 REJECT 不假转正"
                   "（events 按 cmd_sha 去重只一笔，摘要计数每轮都打）" % (cid, text))
 
-        def mark_reject(text):
+        def mark_reject(text, attrib):
+            # REQ-SOP-ATTRIB-1 R2：驳回权/连败计数零触碰；attrib 随 verdict 文本进卡面=归因节
+            text = text + _attrib_tag(attrib)
             nonlocal n_r, fails
             if do_verdict(cid, "REJECT", "recycle DONE补跑FAIL: %s" % text):
                 n_r += 1
                 fails += 1
+                n_attr[attrib] = n_attr.get(attrib, 0) + 1
                 st["cards"][cid] = dict(st["cards"].get(cid) or {}, fails=fails,
                                         last_fail=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
                 note_event(cid, "DONE", "OPEN", "补跑FAIL归因: %s" % text)
-                print("DONE-REJECT %s: 回OPEN 等重派（业主拍板=归因并重做，非机制副作用）连续FAIL %d/%d"
-                      % (cid, fails, n_cap))
+                print("DONE-REJECT %s: 回OPEN 等重派（业主拍板=归因并重做，非机制副作用）连续FAIL %d/%d%s"
+                      % (cid, fails, n_cap, _attrib_tag(attrib)))
             else:
                 print("DONE-GATE-RED %s: verdict REJECT 被闸拒(执行窗竞态)→ 本轮不记 FAIL，下拍再判" % cid)
 
@@ -1049,36 +1075,51 @@ def done_sweep_scan(apply_mode, hours, n_cap, run_seq):
                 # 本机连执行都不可达：对侧跑绿→待对侧验收（本机落章=假痕）；对侧跑红且带
                 # 真失败痕→判据真红可驳；对侧红而无素材→环境性未排除不驳；双侧都起不了→
                 # NOHOST 点名（静默吞反例=本卡禁令，大声些）。
+                # attrib 三选一（REQ-SOP-ATTRIB-1 R2）：跑不了/尾痕空/对侧不可达=环境；
+                # 对侧真痕红=施工（产品缺陷实据）。
                 if rc_x == 0:
-                    mark_pending("本机不可执行(%s)对侧绿" % detail)
+                    mark_pending("本机不可执行(%s)对侧绿" % detail, ATTRIB_ENV)
                 elif rc_x is not None and not x_env:
-                    mark_reject(detail)
+                    mark_reject(detail, ATTRIB_BUILD)
                 elif rc_x is not None:
-                    mark_pending(detail + " 对侧rc≠0但尾痕空/找不到类=环境性失败未排除，不驳先喊")
+                    mark_pending(detail + " 对侧rc≠0但尾痕空/找不到类=环境性失败未排除，不驳先喊",
+                                 ATTRIB_ENV)
                 else:
-                    print("DONE-NOHOST %s: 双侧执行器均不可达(%s)→ 不判，PM 查宿主" % (cid, detail))
+                    print("DONE-NOHOST %s: 双侧执行器均不可达(%s)→ 不判，PM 查宿主 attrib=%s"
+                          % (cid, detail, ATTRIB_ENV))
             elif rc_x == 0:
-                mark_pending(detail + " 对侧绿本机红=单侧OS判据（闸PASS复跑钉本机宿主，跨侧落章=假痕）")
+                mark_pending(detail + " 对侧绿本机红=单侧OS判据（闸PASS复跑钉本机宿主，跨侧落章=假痕）",
+                             ATTRIB_QUIZ)
             elif rc_x is not None:
                 # 双侧都真跑了且都红：只要有一侧的红没有归因素材（静默/cd 失败类），就不能说
                 # 环境已排除——15:58 案（对侧 rc=1 尾空）当年正是从这里被冤驳，双真痕才许驳。
                 if l_env or x_env:
                     mark_pending(detail + " 双侧皆红但至少一侧无归因素材(尾痕空/找不到类)"
-                                          "=环境性失败未排除（REDAUTO-HOST-1②），不驳先喊")
+                                          "=环境性失败未排除（REDAUTO-HOST-1②），不驳先喊",
+                                 ATTRIB_ENV)
                 else:
-                    mark_reject(detail)          # 双侧真痕红=判据真红（含记录侧亲眼红，驳回权成立）
+                    # 双侧真痕红=判据真红（含记录侧亲眼红，驳回权成立）
+                    mark_reject(detail, ATTRIB_BUILD)
             elif l_env:
-                mark_pending(detail + " 跨侧桥不可用且为静默/命令/路径找不到特征=疑似单侧判据，宁pending不假驳")
+                # 桥不可用+本机呈「命令/路径找不到/静默」形=疑似单侧判据（跨解释器喂错）——
+                # 卡面口径：跨解释器喂错归「考题」（判据形态病），非本机环境缺件。
+                mark_pending(detail + " 跨侧桥不可用且为静默/命令/路径找不到特征=疑似单侧判据，宁pending不假驳",
+                             ATTRIB_QUIZ)
             elif follow:
                 # 卡面记着「当年在另一家变绿」，而对侧不可达——判据没在它变绿的宿主上重跑过，
                 # 本机红不构成驳回权（13:57 PARITY-5 类）：pending_side 喊话，不许当 FAIL 打回。
                 mark_pending(detail + " 卡面原验收宿主=%s≠本机=%s 且对侧不可达=判据未在变绿宿主"
-                                      "上重跑过，本机红不具驳回权（REDAUTO-HOST-1①）" % (rec, loc))
+                                      "上重跑过，本机红不具驳回权（REDAUTO-HOST-1①）" % (rec, loc),
+                             ATTRIB_ENV)
             else:
-                mark_reject(detail)          # 无桥+真红特征+宿主无异地记录 = 就地归因驳
+                mark_reject(detail, ATTRIB_BUILD)  # 无桥+真红特征+宿主无异地记录 = 就地归因驳
         finally:
             if prev_cwd is not None:
                 os.chdir(prev_cwd)
+    if sum(n_attr.values()):
+        # REQ-SOP-ATTRIB-1 R2 归因节：本轮 FAIL 处置按机读三值聚合（看板/周报口径的轮内镜像行）
+        print("DONE-ATTRIB 归因节: %s（attrib= 三选一随每笔处置痕落 events 行尾/点名行/卡面 verdict）"
+              % " ".join("%s=%d" % (k, n_attr.get(k, 0)) for k in ATTRIB_ENUM))
     if apply_mode:
         save_done_state(st)
     return n_s, n_v, n_r, n_p

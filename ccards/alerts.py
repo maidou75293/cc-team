@@ -400,10 +400,42 @@ def autoack(key, who=None, reason=None):
         return False
 
 
+# ==== REQ-SOP-ATTRIB-1 R3：销账必带逐键归因注记（业主 seq=35④ 定版口径） ====
+# 病=手工销账不写理由，停铃后「谁销的、为什么」无从追——机器侧反复到期掩蔽已有规则④钉住防线，
+#   手工侧不能成为新盲区（各班手工纪律「掐铃带理由」的升格闸门）。
+# 拒三形：空注记 / 裸名（只有身份没有正文）/ 与命中键文案复读（扣掉键后残量无正文）。
+# 放行：机件通道前缀 auto:/auto@/fuse-|fuse_（autoack 自带 reason 走旁路、fuse 处置痕不误伤）。
+# 痕=alerts.json acked_by 存注记原文（既有先例，本闸只强制它非空泛）。
+_ACK_PUNCT_RE = re.compile(r"[\s。.，,、;；:：!！？?～~\-—_=＝()（）\[\]【】<>《》\"'`*#/\\|+×·]+")
+_BARE_ACK_RE = re.compile(r"[\s。.，,、;；:：!！？?～~\-—_=＝]*(?:pm|auto|fuse|worker|owner)"
+                          r"[\s。.，,、;；:：!！？?～~\-—_=＝]*", re.IGNORECASE)
+_MACHINE_ACK_RE = re.compile(r"^(auto[:@]|fuse[-_])", re.IGNORECASE)
+
+
+def ack_note_check(who, hit_keys):
+    """销账注记闸（纯判据，无写）：合规=None；违规=返回病例短语（ack() 拿它 die 点名口径）。
+    摘本函数的调用=T4 裸名 ack 变放行（差分对红点）。"""
+    w = str(who or "").strip()
+    if _MACHINE_ACK_RE.match(w):
+        return None
+    if not w:
+        return "空注记"
+    if _BARE_ACK_RE.fullmatch(w):
+        return "裸名(%s)无处置理由" % w
+    residue = w
+    for k in hit_keys:
+        residue = residue.replace(str(k), "")
+    if not _ACK_PUNCT_RE.sub("", residue):
+        return "与键文案复读无归因正文"
+    return None
+
+
 def ack(substr, who):
     """子串匹配（大小写敏感原文）：0 命中=[]；跨问题多命中=返回键列表让人缩小（旧契约）；
     同题多命中=按题整组销（MECH-ALARM-DEAGE-1）——「龄30min/龄31min/…」存量变体一击全落 ack，
     不必人肉逐变体 ack 二十遍。停铃不覆痕：已闭合的变体不重写其 ack 时刻。
+    REQ-SOP-ATTRIB-1 R3：手工销账注记不含归因正文（空/裸名/键文案复读）→ 拒+die 点名口径
+    （机件通道 autoack/fuse 痕自带凭据=放行，见 ack_note_check）；调用方 cmd_ack 零改。
     返回=本组全部条目(dict 列表)；调用方（cmd_ack）按 r[0] 显示。"""
     a = entries()
     hits = [k for k in a if substr in k]
@@ -412,6 +444,11 @@ def ack(substr, who):
     if substr in a:
         hits = [substr]  # 精确键优先（S6认领轮 2026-11-03 21:2x）：base 键恒为「｜心跳已恢复待人工」
         # 变体键的前缀，任何子串必双命中→跨题歧义拒收→红灯永远 ack 不掉、S6 反复唤 PM。
+    gate = ack_note_check(who, hits)
+    if gate:
+        raise SystemExit("alerts ack 拒收(REQ-SOP-ATTRIB-1 R3)：销账必带逐键归因注记——"
+                         "%s 不含归因正文；--who 写清「谁判的/依什么处置」再掐"
+                         "（机件通道 auto:/auto@/fuse- 前缀与 autoack 自带 reason 放行）" % gate)
     if len({_key(k) for k in hits}) > 1:
         return hits  # 跨问题歧义：缩小子串再来
     d = read_json(_path()) or {"alerts": {}}

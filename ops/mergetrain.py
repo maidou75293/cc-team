@@ -72,11 +72,14 @@ STEP_TIMEOUT = int(_env_num("MERGE_TRAIN_STEP_TIMEOUT", 900))        # 沙箱单
 ENERGIZE_GRACE_MIN = max(0.0, _env_num("MERGE_TRAIN_ENERGIZE_GRACE_MIN", 1.0))  # 时钟抖动宽限
 RESTART_COOLDOWN_MIN = max(1.0, _env_num("MERGE_TRAIN_RESTART_COOLDOWN_MIN", 10.0))
 
-# REQ-CLAIM-COUNTER-1 R6 冲突超阈上报阈值（卡面终值，业主 seq=29 采建议值）：
-#   同卡 conflict_count>C_CARD 触发（第 3 次解）；同文件簇 events 实探
-#   CONFLICT-RESOLVED 行累计>C_CLUSTER 触发（第 4 次解，跨卡合计）。比较符均为 >（严格大于）。
+# REQ-CLAIM-COUNTER-1 R6 同卡级（业主 seq=29 定值；seq=35② 未改此口径=零触碰）：
+#   同卡 conflict_count>C_CARD 触发（第 3 次解），比较符 >（严格大于）。
 C_CARD = 2
-C_CLUSTER = 3
+# REQ-SOP-ATTRIB-1 R1 簇级（业主 seq=35② 拍板：同文件簇 >=2 即报，草案 >3 作废）：
+#   同文件簇 events 实探 CONFLICT-RESOLVED 行累计 total>=C_CLUSTER 触发（第 2 次解即报，
+#   跨卡合计）。阈值走 env MERGE_TRAIN_CLUSTER_MIN 带默认 2；下限 2=口径地板（坏 env 不得
+#   退回「第 1 解就报」）。键文案随动：cluster=<簇键> total=N>=T 形态可辨识。
+C_CLUSTER = max(2, int(_env_num("MERGE_TRAIN_CLUSTER_MIN", 2)))
 
 # 常驻件版本钉名册（生效锁对象；看板/巡逻环按卡面⑤明文豁免）。
 # lifelines=命脉文件（仓库相对路径，git log 取最后提交时刻；目录=整树随迁）。
@@ -731,8 +734,8 @@ def _conflict_closure(rec, cid, team, log):
         if n > C_CARD:
             _AL.record("CONFLICT-THRESHOLD card=%s conflict_count=%d>%d" % (cid, n, C_CARD))
         total = _cluster_total(team, cluster)
-        if total > C_CLUSTER:
-            _AL.record("CONFLICT-THRESHOLD cluster=%s total=%d>%d" % (cluster, total, C_CLUSTER))
+        if total >= C_CLUSTER:  # REQ-SOP-ATTRIB-1 R1（seq=35②）：第 2 次解即报，>= 形
+            _AL.record("CONFLICT-THRESHOLD cluster=%s total=%d>=%d" % (cluster, total, C_CLUSTER))
     except Exception as exc:
         log("WARN: CONFLICT-THRESHOLD 落键失败(%r)——可见行与 events 已在场" % exc)
     return n

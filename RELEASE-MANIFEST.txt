@@ -87,6 +87,7 @@ tests/sandbox_tree_naming_check.py
 tests/select.sh
 tests/selftest.sh
 tests/slot-churn-test.py
+tests/sop-attrib-test.py
 tests/sop-confirm-test.py
 tests/state_std_test.py
 tests/stoploss-crosslang-test.py
