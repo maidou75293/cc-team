@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 596" width="1100" height="596" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#334155"/></marker>
+    <marker id="aro" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d97706"/></marker>
+    <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#334155" flood-opacity="0.16"/></filter>
+  </defs>
+
+  <!-- ══ 决策层 ══ -->
+  <rect x="14" y="14" width="1072" height="116" rx="10" fill="#f6f7ff" stroke="#4f46e5" stroke-width="1.2"/>
+  <text x="30" y="40" font-size="13" font-weight="700" fill="#4f46e5">决策层</text>
+  <text x="96" y="40" font-size="11.5" fill="#94a3b8">拍板在人，不在机器</text>
+  <rect x="44" y="58" width="250" height="60" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="169" y="82" font-size="14" font-weight="700" fill="#23324d" text-anchor="middle">业主（你）</text>
+  <text x="169" y="101" font-size="11" fill="#64748b" text-anchor="middle">定目标 · 拍板 · 例外仲裁</text>
+  <line x1="298" y1="88" x2="446" y2="88" stroke="#334155" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="372" y="80" font-size="11.5" fill="#475569" text-anchor="middle">目标 / 一句话需求</text>
+  <rect x="450" y="54" width="340" height="68" rx="8" fill="#4f46e5" stroke="#4338ca" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="620" y="80" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">CC 向导（对话入口）</text>
+  <text x="620" y="100" font-size="11" fill="#dbe4ff" text-anchor="middle">问需 · 出方案书 · 你回「确认」= 批量立卡</text>
+  <text x="806" y="92" font-size="12" fill="#94a3b8">机制只执行规则，不做决策</text>
+  <line x1="620" y1="122" x2="620" y2="141" stroke="#334155" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="632" y="136" font-size="12" fill="#475569">写卡（立卡 · 唯一写入口带写锁）</text>
+
+  <!-- ══ 机制层 ══ -->
+  <rect x="14" y="144" width="1072" height="116" rx="10" fill="#f2f9fe" stroke="#0284c7" stroke-width="1.2"/>
+  <text x="30" y="170" font-size="13" font-weight="700" fill="#0284c7">机制层</text>
+  <text x="96" y="170" font-size="11.5" fill="#94a3b8">机器 · 只执行不决策</text>
+  <rect x="44" y="184" width="300" height="68" rx="8" fill="#eef2ff" stroke="#6366f1" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="194" y="207" font-size="13.5" font-weight="700" fill="#23324d" text-anchor="middle">卡账本（单一事实源）</text>
+  <text x="194" y="225" font-size="11" fill="#64748b" text-anchor="middle">graph.json 现态 · events.log 全史</text>
+  <text x="194" y="241" font-size="11" fill="#64748b" text-anchor="middle">claims/ 认领凭证 · 可入 git 评审</text>
+  <line x1="346" y1="206" x2="408" y2="206" stroke="#334155" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="377" y="200" font-size="10" fill="#64748b" text-anchor="middle">读 OPEN</text>
+  <line x1="408" y1="232" x2="346" y2="232" stroke="#334155" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="377" y="246" font-size="10" fill="#64748b" text-anchor="middle">写 claims</text>
+  <rect x="410" y="184" width="300" height="68" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="560" y="207" font-size="13.5" font-weight="700" fill="#23324d" text-anchor="middle">派单 dispatch</text>
+  <text x="560" y="225" font-size="11" fill="#64748b" text-anchor="middle">按 lanes 白名单取卡 · 起 worker 会话</text>
+  <text x="560" y="241" font-size="11" fill="#64748b" text-anchor="middle">多道并行 · 一卡一道一任期</text>
+  <line x1="776" y1="206" x2="712" y2="206" stroke="#d97706" stroke-width="1.9" stroke-dasharray="5,4" marker-end="url(#aro)"/>
+  <text x="744" y="200" font-size="10" fill="#92400e" text-anchor="middle">停杀/冻结</text>
+  <rect x="776" y="184" width="290" height="68" rx="8" fill="#fff7ed" stroke="#d97706" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="921" y="207" font-size="13.5" font-weight="700" fill="#23324d" text-anchor="middle">常驻环 ctrld（时间轮）</text>
+  <text x="921" y="225" font-size="11" fill="#64748b" text-anchor="middle">心跳断流回收 · 合流看护 · 看门告警</text>
+  <text x="921" y="241" font-size="11" fill="#64748b" text-anchor="middle">一个进程跑全部周期环，零 OS 定时器</text>
+  <line x1="560" y1="252" x2="560" y2="297" stroke="#334155" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="572" y="281" font-size="11.5" fill="#475569">对整层派发 · 哪条道由卡面 lanes 决定，非机器指定</text>
+
+  <!-- ══ 执行层 ══ -->
+  <rect x="14" y="300" width="1072" height="110" rx="10" fill="#f7f9fc" stroke="#475569" stroke-width="1.2"/>
+  <text x="30" y="326" font-size="13" font-weight="700" fill="#475569">执行层</text>
+  <text x="96" y="326" font-size="11.5" fill="#94a3b8">一泳道 = 一终端 agent 会话 = 一 git worktree = 一张卡</text>
+  <g font-size="13.5" font-weight="700" fill="#23324d" text-anchor="middle">
+    <rect x="38" y="340" width="86" height="56" rx="8" fill="#ffffff" stroke="#94a3b4" stroke-width="1.3" filter="url(#sh)"/><text x="81" y="362">slot-1</text>
+    <rect x="133" y="340" width="86" height="56" rx="8" fill="#ffffff" stroke="#94a3b4" stroke-width="1.3" filter="url(#sh)"/><text x="176" y="362">slot-2</text>
+    <rect x="228" y="340" width="86" height="56" rx="8" fill="#ffffff" stroke="#94a3b4" stroke-width="1.3" filter="url(#sh)"/><text x="271" y="362">slot-3</text>
+    <rect x="323" y="340" width="86" height="56" rx="8" fill="#ffffff" stroke="#94a3b4" stroke-width="1.3" filter="url(#sh)"/><text x="366" y="362">…</text>
+  </g>
+  <g font-size="11" fill="#64748b" text-anchor="middle">
+    <text x="81" y="382">写码交卷</text><text x="176" y="382">写码交卷</text><text x="271" y="382">写码交卷</text><text x="366" y="382">弹性扩道</text>
+  </g>
+  <text x="440" y="372" font-size="11.5" fill="#475569">worker 中途死掉不要紧：心跳断流自动回收，卡回队头重派（任期制防僵尸续牌）</text>
+
+  <!-- ══ 交付层 ══ -->
+  <rect x="14" y="420" width="1072" height="118" rx="10" fill="#f3faf8" stroke="#0f766e" stroke-width="1.2"/>
+  <text x="30" y="446" font-size="13" font-weight="700" fill="#0f766e">交付层</text>
+  <text x="96" y="446" font-size="11.5" fill="#94a3b8">出口只有两个：机器盖章进主干，或打回重派</text>
+  <line x1="280" y1="398" x2="280" y2="458" stroke="#334155" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="292" y="452" font-size="11.5" fill="#475569">DONE 交卷（commit）</text>
+  <rect x="44" y="460" width="500" height="66" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="294" y="482" font-size="13.5" font-weight="700" fill="#9f1239" text-anchor="middle">Verifier 机器验收 —— 复跑卡面判据</text>
+  <text x="294" y="500" font-size="11" fill="#64748b" text-anchor="middle">verify 命令原文实跑，绿了才盖 VERIFIED</text>
+  <text x="294" y="516" font-size="11" fill="#64748b" text-anchor="middle">红 = 不放行；验收后仍可抽查打回（撤章唯一通道）</text>
+  <line x1="544" y1="493" x2="594" y2="493" stroke="#334155" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="569" y="486" font-size="10" fill="#64748b" text-anchor="middle">绿章</text>
+  <rect x="596" y="460" width="460" height="66" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.3" filter="url(#sh)"/>
+  <text x="826" y="482" font-size="13.5" font-weight="700" fill="#1d4fb8" text-anchor="middle">git 主干（你自己的仓库）</text>
+  <text x="826" y="500" font-size="11" fill="#64748b" text-anchor="middle">每笔合入都带机器验收痕 = 你流水线的放行信号</text>
+  <text x="826" y="516" font-size="11" fill="#64748b" text-anchor="middle">部署/回滚留在你的管线，引擎不碰生产环境</text>
+  <polyline points="826,526 826,556 22,556 22,206 40,206" fill="none" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="7,4" marker-end="url(#arr)"/>
+  <text x="430" y="550" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="middle">FAIL 打回 → 卡回 OPEN 重派（唯一回炉通道，不口头返工）</text>
+
+  <!-- 图例 -->
+  <line x1="40" y1="580" x2="74" y2="580" stroke="#334155" stroke-width="2.1"/>
+  <text x="80" y="584" font-size="11.5" fill="#475569">常规流转（只跨层）</text>
+  <line x1="218" y1="580" x2="252" y2="580" stroke="#d97706" stroke-width="1.9" stroke-dasharray="5,4"/>
+  <text x="258" y="584" font-size="11.5" fill="#475569">看护异常处置</text>
+  <line x1="366" y1="580" x2="400" y2="580" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="7,4"/>
+  <text x="406" y="584" font-size="11.5" fill="#475569">验收回炉</text>
+</svg>

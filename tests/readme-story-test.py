@@ -10,10 +10,17 @@
 #      真渲染，不许口头）；新增 T2d 给保留的第一版动画 demo-docqa.gif 立案（存在/魔数/帧数/
 #      体积/SCENES 六桶+board=0/TOTAL 对账）——「保留」也得上锁，删了会红。
 # R7 按 00:5x 打回落新锁（业主原话「是不是应该把架构图放在readme，里面太啰嗦了，结构也乱」）：
-#      T9a 主线（附录前）必须有一个 mermaid 架构图块，且五个节点词（账本/常驻/泳道/复跑/主干）
-#      全在块内点名——图不许是装饰，必须画出本引擎的真构件；
+#      T9a 主线必须有架构图且五个构件词（账本/常驻/泳道/复跑/主干）在图内点名——图不许是
+#      装饰，必须画出本引擎的真构件（R8 起实体从 mermaid 块换成面板四层形改的 architecture.svg，
+#      判据随载体换闸、不降强度）；
 #      T9b 篇幅闸门：主线行数≤200（结构重组后实测基线附近），再写胖=红——「啰嗦」不许复发。
-#   T1 头引图：全文第一个被引用的图片必须是 demo.gif，且位于第一个二级标题之前（置顶）；
+# R8 按 01:2x/01:4x 打回落新形（业主原话「面板有架构图更新到 readme 前面」「两个动画应该放到架构
+#      下面」「迁移矩阵类似工程开发细节为什么要放在上面」「要傻瓜式，就是架构图+两个视频+吹牛」）：
+#      首屏=architecture.svg（面板四层形改公共口径的静态图）→ 读图三条 → demo.gif → demo-docqa.gif；
+#      概念/常驻环/配置/发布边界/迁移矩阵全部下沉附录；T1 头引图从 demo.gif 换闸为
+#      architecture.svg（且两动画同列第一个二级标题之前、排在架构图之后），T9a 换 svg 载体。
+#   T1 头引图：全文第一个被引用的图片必须是 architecture.svg，且 demo.gif/demo-docqa.gif 同列
+#      第一个二级标题之前、排在架构图之后（首屏三件套=图+两视频，业主 R8）；
 #   T2 动画本体：demo.gif 存在、魔数 GIF89a、帧数≥10、体积<8MB（业主 11-04 22:1x 打回补画面后
 #      放宽上限；重录变大/退化仍即红）；
 #   T2c 画面构成（R3 定稿+R4 补「建成系统演示」业主 23:3x）：GIF 注释扩展块内 SCENES 清单
@@ -30,7 +37,8 @@
 #   T5 语气闸门：剥除图片与链接语法后，正文第一个含中文段落不得出现感叹号（专业，不叫卖）；
 #   T6 机器表不漂移：README 四张 STATE-* 标记表与 ccards/statemachine.py 逐行同源
 #      （与 state_std_test S2 同判据——头部怎么改，机器契约区必须原样在位）；
-#   T9 架构图与篇幅（R7 新规格）：主线有 mermaid 图块且构件点名、主线行数≤200；
+#   T9 架构图与篇幅（R7 规格·R8 换载体）：仓内 architecture.svg 存在且构件点名、README 引用它
+#      于 demo.gif 之前、主线行数≤200；
 #   T7 导出面同源（11-04 死图事故补锁）：README 引用的每个本地图片资产必须同时在发布
 #      清单内（oss_cli.RELEASE_FILES 点名 或 RELEASE_DIRS 目录覆盖）——判据全绿≠公仓有图，
 #      export 根文件按清单点名，漏一行=公仓首页 404 死图（demo.gif 实踩）。
@@ -40,6 +48,7 @@ import io, os, re, sys, tempfile
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # cc-team 根
 README = os.path.join(SRC, "README.md")
 GIF = os.path.join(SRC, "demo.gif")
+SVG = os.path.join(SRC, "architecture.svg")
 try:      # 宿主 cp936 控制台防炸（全仓测试同规）
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -140,22 +149,35 @@ def readme_text():
     return io.open(README, encoding="utf-8").read()
 
 
-# ─────────────────────────── T1 头引图=demo.gif 置顶 ───────────────────────────
+# ─────────────── T1 首屏三件套=architecture.svg+两个动画，全部置顶（R8 换闸） ───────────────
+def _img_pos(txt, url):
+    """README 内首次以 `](url)` 形式出现的图片引用位置；找不到=-1（容忍 ./ 前缀）。"""
+    m = re.search(r"!\[[^\]]*\]\(\.?/?%s\)" % re.escape(url), txt)
+    return m.start() if m else -1
+
+
 def t1():
     txt = readme_text()
     m = re.search(r"!\[[^\]]*\]\(([^)]*)\)", txt)
     if not m:
         return bad("T1 头引图", "README 无任何图片引用")
     url = m.group(1).strip().lstrip("./")
-    if url == "demo.gif":
-        ok("T1 全文第一个被引图片=demo.gif")
+    if url == "architecture.svg":
+        ok("T1 全文第一个被引图片=architecture.svg（R8：架构图置顶）")
     else:
-        bad("T1 头引图", "第一个图片引用=%r（要求 demo.gif）" % url)
+        bad("T1 头引图", "第一个图片引用=%r（要求 architecture.svg）" % url)
     h2 = txt.find("\n## ")
-    if h2 >= 0 and m.start() < h2:
-        ok("T1 demo.gif 位于第一个二级标题之前（置顶）")
+    p_svg, p_gif, p_doc = _img_pos(txt, "architecture.svg"), _img_pos(txt, "demo.gif"), _img_pos(txt, "demo-docqa.gif")
+    if min(p_svg, p_gif, p_doc) < 0:
+        return bad("T1 首屏三件套", "缺引用 svg@%s demo@%s docqa@%s" % (p_svg, p_gif, p_doc))
+    if h2 >= 0 and p_svg < h2 and p_gif < h2 and p_doc < h2:
+        ok("T1 架构图+两个动画全部位于第一个二级标题之前（首屏，工程细节不许抬头）")
     else:
-        bad("T1 头引图未置顶", "img@%s h2@%s" % (m.start(), h2))
+        bad("T1 首屏未齐", "svg@%s gif@%s docqa@%s h2@%s" % (p_svg, p_gif, p_doc, h2))
+    if p_svg < p_gif < p_doc:
+        ok("T1 首屏次序=架构图→头牌动画→保留版动画（业主 01:2x「两个动画放到架构下面」）")
+    else:
+        bad("T1 首屏次序", "svg@%s 必须 < demo.gif@%s 必须 < demo-docqa.gif@%s" % (p_svg, p_gif, p_doc))
 
 
 # ─────────────────────────── T2 gif 本体：魔数/帧数/体积 ───────────────────────────
@@ -401,21 +423,31 @@ def t8():
             bad(name, "主线未见 /%s/" % pat)
 
 
-# ─────────────── T9 架构图在场+构件点名 / 主线篇幅闸门（R7） ───────────────
+# ─────────── T9 架构图实体在场+构件点名（R8 载体=svg）/ 主线篇幅闸门（R7） ───────────
 def t9():
     txt = readme_text()
     m = re.search(r"^#{1,6}[ \t]*附录", txt, re.M)
     main = txt[:m.start()] if m else txt
-    mm = re.search(r"^```mermaid\b(.*?)^```", main, re.M | re.S)
-    if not mm:
-        bad("T9a 架构图", "主线（附录前）无 mermaid 图块——业主 00:5x：架构图必须进 README 主线")
+    if not os.path.isfile(SVG):
+        bad("T9a 架构图", "architecture.svg 缺失——业主 01:2x：面板架构图更新后进 README 置顶")
     else:
-        block = mm.group(1)
-        miss = [w for w in ("账本", "常驻", "泳道", "复跑", "主干") if w not in block]
-        if miss:
-            bad("T9a 架构图", "图块未点名构件 %s——图必须画真构件，装饰画不算" % ",".join(miss))
+        svg = io.open(SVG, encoding="utf-8").read()
+        if not svg.lstrip().startswith("<svg"):
+            bad("T9a 架构图", "architecture.svg 非 svg 实体（首=%r）" % svg.lstrip()[:20])
         else:
-            ok("T9a 主线架构图在场（mermaid·账本/常驻/泳道/复跑/主干 五构件点名）")
+            ok("T9a 架构图实体在场（architecture.svg·静态零脚本）")
+        miss = [w for w in ("账本", "常驻", "泳道", "复跑", "主干") if w not in svg]
+        if miss:
+            bad("T9a 图内构件", "svg 未点名构件 %s——图必须画真构件，装饰画不算" % ",".join(miss))
+        else:
+            ok("T9a 架构图五构件点名（账本/常驻/泳道/复跑/主干）")
+        p_svg, p_gif = _img_pos(txt, "architecture.svg"), _img_pos(txt, "demo.gif")
+        if p_svg < 0:
+            bad("T9a 引用断链", "svg 在盘上但 README 没引——公仓首页看不见图")
+        elif p_gif >= 0 and p_svg > p_gif:
+            bad("T9a 引用次序", "README 里架构图（@%d）未排在 demo.gif（@%d）之前" % (p_svg, p_gif))
+        else:
+            ok("T9a README 引用架构图且先于动画（首屏叙事=先看懂、再看跑、再吹牛）")
     n_main = len(main.splitlines())
     if n_main <= 200:
         ok("T9b 主线行数=%d（≤200=R7 瘦身闸门，再写胖即红）" % n_main)

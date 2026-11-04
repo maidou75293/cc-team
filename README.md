@@ -1,31 +1,6 @@
 # cc-team —— 给 git 地址 + 一句话，CC 自举；之后全对话
 
-![单一 Claude Code 对话框的全链对话实录（SANDBOX · 按真实时戳加速回放）：给 git 地址 → 装机自检 → 说人话需求 → 立卡开工 → 交卷 → 判据红不放行 → 打回返工 → 机器盖章合入 → 交付界面产品图实拍确认 → 建成的内部审批系统现场演示](demo.gif)
-
-*画面里只有一个对话框，你全程只做三件事：把 git 地址粘给 Claude Code、用人话把需求说清、回一句「确认」。其余每一行都是引擎真实执行输出——`git clone` 与 `cc init` 自检落地 `ALL_PASS`、`cc` 首次进入自动在一次性临时沙箱把全链跑给你看：这轮说的是「做一个内部审批系统」，立卡、起工位、领任务交卷、判据红的卡如实停在待验不放行、验收后被抽查打回、返工重交由机器复跑判据才落绿章、终局逐卡对账；界面卡交卷后，无头浏览器对交付件 `approval_ui.html` 真实出图，**产品图进对话等你确认**；链收口后**把建成的系统现场跑一遍**——通过一单、驳回一单，审批人与理由留痕齐全，最后一帧是界面真渲染的现场演示。真跑实录非摆拍：逐帧按真实时戳拼帧加速回放，实拍帧是无头浏览器对合入主干交付件的真渲染，临时随机路径已隐去，同一链路你本地复跑可对照（`cc init` + `cc` 首进即见，或 `cc demo` 跑双泳道并行全链后自毁）。*
-
-[![ci](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml/badge.svg)](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml)
-![license](https://img.shields.io/badge/license-MIT-green)
-![python](https://img.shields.io/badge/python-3.9%2B-blue)
-![deps](https://img.shields.io/badge/runtime%20dependencies-none-yellowgreen)
-
-> 通用发行版。现网运营记录（历史裁定、验收数字、运维台账）留在源仓库 `docs/`，不随发布包分发。
-
-## 一图看懂：账本驱动，对话框进出
-
-```mermaid
-flowchart LR
-  YOU["你<br/>只对话，不敲命令"] -->|"粘 git 地址 + 一句话"| WIZ["六步向导<br/>问需求 → 出方案书 → 你确认"]
-  WIZ -->|确认=批量立卡| LED[("卡账本<br/>state/graph.json + events.log<br/>cards_dag.py 带写锁唯一入口")]
-  LED --> CTRL["常驻引擎 ctrld<br/>一个进程内时间轮跑全部周期环"]
-  CTRL --> DISP["派单 dispatch<br/>多道并行起 worker 会话"]
-  DISP --> LANE["泳道 worker<br/>git worktree 写码交卷"]
-  LANE -->|交卷 commit| GATE["机器验收<br/>复跑卡面判据"]
-  GATE -->|绿=盖章| MAIN[("git 主干")]
-  GATE -->|红=不放行/打回| LED
-  CTRL --> KEEP["回收与看护<br/>心跳断流·合流·看门"]
-  KEEP -.->|死卡自动回队头| LED
-```
+![架构图（四层一张图看全）：决策层——业主给目标，CC 向导出方案书，你回「确认」=批量立卡；机制层——卡账本（单一事实源）+ 派单 + 常驻环；执行层——一泳道=一终端 agent 会话=一 git worktree=一张卡；交付层——Verifier 复跑卡面判据，绿章才进 git 主干，红则打回重派](architecture.svg)
 
 读图三条（这就是「凭什么信它」的全部答案）：
 
@@ -36,6 +11,40 @@ flowchart LR
   回收重派；每个防护配「撤掉修复必红」的差分自证，全套锁在 CI 的 Linux/Windows 每推必跑。
 - **你只做三件事**：粘一次地址、说一句话、看实时播报。你 `git log` 里带机器验收痕的 commit
   就是你自家流水线的放行信号——部署留在你的管线，引擎不碰你的生产环境。
+
+![单一 Claude Code 对话框的全链对话实录（SANDBOX · 按真实时戳加速回放）：给 git 地址 → 装机自检 → 说人话需求 → 立卡开工 → 交卷 → 判据红不放行 → 打回返工 → 机器盖章合入 → 交付界面产品图实拍确认 → 建成的内部审批系统现场演示](demo.gif)
+
+*画面里只有一个对话框：`git clone` 与 `cc init` 自检落地 `ALL_PASS`、立卡、起工位、领任务交卷、判据红的卡如实停在待验不放行、验收后被抽查打回、返工重交由机器复跑判据才落绿章；界面卡交卷后，无头浏览器对交付件 `approval_ui.html` 真实出图，**产品图进对话等你确认**；链收口后**把建成的系统现场跑一遍**——通过一单、驳回一单，审批人与理由留痕齐全。真跑实录非摆拍：逐帧按真实时戳拼帧加速回放，实拍帧是无头浏览器对合入主干交付件的真渲染，同一链路你本地可复跑对照（`cc init` + `cc` 首进即见，或 `cc demo`）。*
+
+![第一版全链对话实录（SANDBOX · 按真实时戳加速回放）：同一对话框，建成的系统是「文档问答」小程序——提问「退货的期限是几天？」，答复带出处真打出来](demo-docqa.gif)
+
+*业主明令保留的第一版，原样存档可对照：同样是单一对话框全链实录，建成的系统换成「文档问答」小程序——三条泳道合入主干的文件组成它，提问带出处真答。头牌动画是它的下一版：建成的系统换成有界面的内部审批系统，并补上产品图确认与现场演示。*
+
+[![ci](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml/badge.svg)](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-MIT-green)
+![python](https://img.shields.io/badge/python-3.9%2B-blue)
+![deps](https://img.shields.io/badge/runtime%20dependencies-none-yellowgreen)
+
+> 通用发行版。现网运营记录（历史裁定、验收数字、运维台账）留在源仓库 `docs/`，不随发布包分发。
+
+## 吹牛：全表只此一家（有据——2026-11 对公开项目实测调研）
+
+一句话版本：**别人的收口是「人看一眼 diff」，这里的收口是机器复跑判据盖章；别人的账本在厂商的云端或数据库里，这里的账本是你仓库里的明文文件。**
+
+| 方案 | 状态存哪 | 怎么并行 | 怎么验收 | 现状/License |
+|---|---|---|---|---|
+| **cc-team** | **明文文件账本+追加式事件日志**，断电不丢、可入 git 评审 | git worktree 泳道 | **机器复跑卡面判据，绿了才 VERIFIED**；账本级僵尸回收与写入围栏（任期制） | 本项目 / MIT |
+| Claude Squad | 本地会话配置，无任务台账 | tmux + worktree | 人审 diff 再 checkout | 活跃 / AGPL-3.0 |
+| Claude Code Agent Teams | 官方文档自认：team 配置**会话结束即删**，/resume 不恢复成员，孤儿会话列于人工排障清单 | 共享任务列表认领 | hooks 槽位（闸门要自己写），实验特性默认关闭 | 专有软件 |
+| Vibe Kanban | 内部 SQLite（不透明） | 看板任务→worktree | 人审 diff/PR | **公司 2026-04 关停**转社区 / Apache-2.0 |
+| container-use | 容器日志+分支，无状态机 | Docker 容器 | 人审分支 | 停滞（release 止于 2025-08）/ Apache-2.0 |
+| Conductor / Copilot agent | 应用/平台侧托管 | worktree / 云沙箱 | 人审后合并 | 闭源商业 / 专有 SaaS |
+| LangGraph / CrewAI / AutoGen | 检查点或状态 JSON（依赖 SQLite/Postgres；社区公开指出 checkpoint≠可恢复执行） | 图节点/流程，非面向代码仓 | 无代码验收闸门概念；AutoGen 已入维护模式 | 框架类 / MIT 等 |
+
+两条结论：
+
+- **验收=机器复跑卡面判据，全表唯一无对等项**——其余方案的收口都是「人看一眼 diff」。
+- **账本完全归用户**——纯明文文件、无厂商账号、本地自主；反例是 Vibe Kanban 公司 2026-04 关停，云端看板被一并移除。
 
 ## 前置（一共三条，没有其他）
 
@@ -49,42 +58,17 @@ flowchart LR
 
 > 把这个仓库装上，让你能带团队干活：`<cc-team 的 git 地址>`
 
-剩下全是 CC 的活：`cc init` 生成运行时目录与配置模板、按落盘的常驻模板装成开机自启
-（Windows 计划任务 / macOS launchd / Linux systemd 三选一，此后全部周期跑在这一个常驻
-进程的时间轮里，不给每个环建 OS 定时器），自检报 `ALL_PASS`。探测缺什么**只打印官方安装
-命令**让你决定，绝不静默代装。
+剩下全是 CC 的活：`cc init` 生成运行时目录与配置模板、装成开机自启的常驻进程，自检报 `ALL_PASS`。探测缺什么**只打印官方安装命令**让你决定，绝不静默代装。
 
-**② 对 `cc` 说人话需求**——裸 `cc` 进六步向导：探测 → 问需 → 出方案书 → 你回「确认」→
-批量立卡、起工位、实时播报。对话形如：
+**② 对 `cc` 说人话需求**——裸 `cc` 进六步向导：探测 → 问需 → 出方案书 → 你回「确认」→ 批量立卡、起工位、实时播报。
 
-- 你：我要建一个企业内部智能体：文档传上来能问答，按员工权限控制可见范围，回答要带出处
-- cc：[步骤4/6] 方案书清单（3 个模块：接入与检索 / 权限 / 回答质量），每模块列功能、
-  怎么测（=验收判据）、后面怎么用……回复「确认」就立卡开工，回复「改X」继续调
-- 你：确认
+**③ 之后只看播报**——立卡入账、认领起会话、多道 worktree 并行写码、会话退出钩子自动跑你的验收命令、绿了并进主干；每个关键环节实时回对话（[立卡] / [开工] / [交卷] / [验收绿·合入主干]）。
 
-**③ 之后只看播报**——立卡入账、认领起会话、多道 worktree 并行写码、会话退出钩子自动跑你的
-验收命令、绿了并进主干，每个关键环节实时回对话：
+**不放心？先在沙箱彩排一遍**——`cc demo` 在一次性临时沙箱里真跑「立卡 → 双泳道并行 → 合入主干 → 机器复跑判据 → 自毁」，零真实账触碰，末行 `DEMO_PASS` = 全链通；首次进 `cc` 向导也会自动先在临时沙箱把全链演一遍（含「判据红就不放行」「验收后可打回」两种真实结局），你点头才碰你的仓库。
 
-- [立卡] SEARCH-TOPK 已入账待领 ｜ [工位] 在编 2 个：slot-1, slot-2
-- [开工] slot-1 领了它 → [交卷] 待机器复跑判据 → [验收绿·合入主干]
+你不需要知道任何命令——手工等价物、概念与账本、常驻环、配置、发布边界，全部收在文末附录。
 
-你不需要知道「立卡/认领/合流」怎么拼成命令——那是引擎和 worker 之间的事，全走账本与闸门；
-手工等价物全在文末附录，主线用不到。
-
-## 不放心？先在沙箱彩排一遍
-
-`cc demo` 在一次性临时沙箱里真跑「立卡 → 双泳道并行 → 合入主干 → 机器复跑判据 → 自毁」，
-零真实账触碰；末行 `DEMO_PASS` = 全链通，任一环节断 = `DEMO_FAIL: <环节名>`。上面头牌动画
-的第四段画面就是这条命令的实录转译，你可以复跑对照。首次进 `cc` 向导也会自动先在临时沙箱
-把全链演一遍（含「判据红就不放行」「验收后可打回」两种真实结局），你点头才碰你的仓库。
-
-## 第一版动画（保留）
-
-![第一版全链对话实录（SANDBOX · 按真实时戳加速回放）：同一对话框，建成的系统是「文档问答」小程序——提问「退货的期限是几天？」，答复带出处真打出来](demo-docqa.gif)
-
-*业主明令保留的第一版，原样存档可对照：同样是单一对话框全链实录，建成的系统换成「文档问答」小程序——三条泳道合入主干的文件组成它，提问带出处真答。头牌动画是它的下一版：建成的系统换成有界面的内部审批系统，并补上产品图确认与现场演示。*
-
-## 概念与账本
+## 附录A：概念与账本
 
 | 概念 | 是什么 |
 |---|---|
@@ -106,7 +90,8 @@ cc-team/
 └── config.toml           # 可选：文件层配置（★不在发布包内，由 cc init 生成）
 ```
 
-## 常驻环与红绿锁（全部周期跑在上面那个常驻进程里）
+## 附录B：常驻环与红绿锁（全部周期跑在附录开头那个常驻进程 ctrld 的时间轮里）
+
 - `dispatch.py` —— 派单器：按名册找空闲泳道，取队首可领卡，起 worker 会话并绑锚。
 - `ctrld.py` —— 控制进程：一个进程内跑所有周期环（派发/回收/红检/看门/合流…），周期可配。
 - `recycle.py` —— 回收器：心跳断流、认领未起班、DONE 积压三类场景的自动 release/巡检。
@@ -118,7 +103,7 @@ cc-team/
 `tests/` 为每个环节配红绿锁：`all.sh` 汇总跑五套（账本/对抗/回收守卫/判活/CC 环境检测），
 `oss-release-check.py` 是发布包自身的常驻锁（敏感清零/白名单边界/默认等价三段）。
 
-## 配置（一切定制走配置，默认值=引擎出厂行为）
+## 附录C：配置（一切定制走配置，默认值=引擎出厂行为）
 
 优先级：**环境变量 > `config.toml` 文件层 > 内置默认**。文件层发现顺序：
 `CC_CONFIG` 指向的文件 > 账本根（`CC_TEAM_HOME`）下的 `config.toml`。
@@ -147,11 +132,12 @@ cc-team/
 | `tasks.ctrld` / `tasks.boot` / `tasks.fuse` | `CTRLD_TASK_NAME` / `BOOT_TASK_NAME` / `FUSE_TASK_NAME` | 操作系统计划任务名（Windows 侧） |
 | `platform.api_base` | `NIGHT_LEARN_BASE` | 外接平台 API 入口（夜环上报类）。真实部署地址是环境定制项——只写本机 `config.toml`，引擎包内不落真实地址、内置默认=本机形态 |
 
-## 发布边界
+## 附录D：发布边界
 
 发布包只含：`ccards/`、`ops/`、`tests/`、`deploy/`（Linux systemd / macOS launchd 常驻模板）、
-`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`demo.gif` 与保留的第一版
-`demo-docqa.gif`（动画资产与 README 引用逐条对账=判据 `readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
+`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`architecture.svg`（首页架构图）、
+`demo.gif` 与保留的第一版 `demo-docqa.gif`（动画资产与 README 引用逐条对账=判据
+`readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
 `CHANGELOG.md`、`CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`（脚本强制 LF——
 Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
 **运行现账一律不出包**：`state/`、`logs/`、`claims/`、`briefs/`、`inbox/`、`registry` 实账、
@@ -159,24 +145,8 @@ Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
 `ccards/oss_cli.py export --out <dir>`（或 `cc export`）按上述白名单复制，等价一次干净 clone；
 `tests/oss-release-check.py` 对该白名单+敏感面常驻把关，改一行发布集都可能让它红。
 
-## 和现成方案的差异（2026-11 对公开项目实测调研）
+## 附录E：手工命令（主线用不到；观察/调试/无 daemon 直驱时才碰）
 
-| 方案 | 状态存哪 | 怎么并行 | 怎么验收 | 现状/License |
-|---|---|---|---|---|
-| **cc-team** | **明文文件账本+追加式事件日志**，断电不丢、可入 git 评审 | git worktree 泳道 | **机器复跑卡面判据，绿了才 VERIFIED**；账本级僵尸回收与写入围栏（任期制） | 本项目 / MIT |
-| Claude Squad | 本地会话配置，无任务台账 | tmux + worktree | 人审 diff 再 checkout | 活跃 / AGPL-3.0 |
-| Claude Code Agent Teams | 官方文档自认：team 配置**会话结束即删**，/resume 不恢复成员，孤儿会话列于人工排障清单 | 共享任务列表认领 | hooks 槽位（闸门要自己写），实验特性默认关闭 | 专有软件 |
-| Vibe Kanban | 内部 SQLite（不透明） | 看板任务→worktree | 人审 diff/PR | **公司 2026-04 关停**转社区 / Apache-2.0 |
-| container-use | 容器日志+分支，无状态机 | Docker 容器 | 人审分支 | 停滞（release 止于 2025-08）/ Apache-2.0 |
-| Conductor / Copilot agent | 应用/平台侧托管 | worktree / 云沙箱 | 人审后合并 | 闭源商业 / 专有 SaaS |
-| LangGraph / CrewAI / AutoGen | 检查点或状态 JSON（依赖 SQLite/Postgres；社区公开指出 checkpoint≠可恢复执行） | 图节点/流程，非面向代码仓 | 无代码验收闸门概念；AutoGen 已入维护模式 | 框架类 / MIT 等 |
-
-两条结论：
-
-- **验收=机器复跑卡面判据，全表唯一无对等项**——其余方案的收口都是「人看一眼 diff」。
-- **账本完全归用户**——纯明文文件、无厂商账号、本地自主；反例是 Vibe Kanban 公司 2026-04 关停，云端看板被一并移除。
-
-## 附录A：手工命令（主线用不到；观察/调试/无 daemon 直驱时才碰）
 上面「开干」三步全程没有命令行——自举由 CC 自己完成。这里是同一批动作的手工等价物，
 只给需要观察、调试或不装守护的人；`pyproject.toml` 声明控制台入口
 `cc = ccards.oss_cli:main`（pip/pipx 安装后可用；无安装环境时
@@ -211,7 +181,7 @@ python -I cards_dag.py verdict REQ-DEMO-1 PASS --as Verifier
 - 会话结束自动结账 = 在你的 agent 的 Stop/退出钩子里调 `ops/check_exit.py`（按会话身份
   安全结算，防串卡）。
 
-## 附录B：状态=属主与迁移矩阵（同源机器读区，#80 锁逐行对账）
+## 附录F：状态=属主与迁移矩阵（同源机器读区，#80 锁逐行对账）
 > 下面四张标记表（`STATE-OWNER / STATE-TERMS / STATE-MATRIX / STATE-FIELDS`）是**机器契约**：
 > `tests/state_std_test.py` 按标记切表，与唯一数据源 `ccards/statemachine.py`
 > （TERMS / OWNER_MATRIX / TRANSITIONS / REQUIRED_FIELDS）逐行比对——改代码数据必须同批改表，

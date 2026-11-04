@@ -86,7 +86,8 @@
 # cron（MECH-STD1 改路径为 ops/，语义不变；形态=<仓根>/cc-team/ops/recycle.py，具体绝对路径随仓位置派生）:
 #   每 10 分钟 --apply，输出追加 <仓根>/cc-team/logs/recycle.log（2026-11-03 起收编 cc-ctrld full 环，
 #   OS crontab 已注销，见 docs/机制-全Windows切流-20261103.md）
-import argparse, contextlib, hashlib, io, json, os, re, shutil, signal, subprocess, sys, time
+import argparse, contextlib, hashlib, io, json, os, re, shutil, signal, subprocess, sys
+import tempfile, threading, time
 from datetime import datetime
 import os
 NO_WIN = 0x08000000 if os.name == "nt" else 0  # 黑窗口根除(业主2026-11-03)：无控制台父派生的子进程不再各自分配 conhost
@@ -720,11 +721,62 @@ def cross_argv(cmd):
     return None
 
 
+# ---------- 套件根隔离窗（BUG-TRAIN-REVERIFY-FLIP-1②：轮转/done-sweep/巡逻验证宿主） ----------
+# 病根：done-sweep 补跑与火车步②判据都走 run_argv 的**继承面**（子进程拿 os.environ），
+# 判据内含 all.sh/selftest 类套件时落默认 /tmp 固定名沙箱（CC_TEST_HOME=/tmp/cc-team-test、
+# CCSUITE_DIR=/tmp/ccsuite，各套件开跑即 rm -rf 自家根）——与泳道 worker 手跑、火车其他圈
+# 并跑=互相 rm -rf 假红源（E3 共根并发实锤见证据文）。收口=**线程局部**窗：谁开窗谁的孩子
+# 用独立 root，别的环线程零感知（os.environ 全局窗=污染他环 spawn，宿主 PIN 先例只敢钉
+# UTF-8 正因那方向无害；套件 root 键分钟级窗内他环继承=新共踩面，故不用全局窗）。
+_ROT = threading.local()
+
+
+def _rot_env():
+    """窗内= dict(os.environ)+mergetrain.suite_env(root) 单入口套件族八键；窗内无 root 或
+    窗外（默认态）=None → subprocess 逐字旧样继承（REDAUTO 共享链零扰动）。懒载 mergetrain
+    （兄弟件函数内 import 同 memgate/pool 法）；载失败响亮回落旧样（宁旧样不炸环）。"""
+    root = getattr(_ROT, "suite_root", None)
+    if not root:
+        return None
+    try:
+        import mergetrain as _MT
+    except Exception:
+        return None
+    return _MT.suite_env(root)
+
+
+@contextlib.contextmanager
+def rotate_isolation(root):
+    """把当前线程的 run_argv 子进程套件根指到 root（嵌套复原前值；火车步②复用本钩——
+    getattr(recycle_mod) 现查，假件无钩=不套）。"""
+    prev = getattr(_ROT, "suite_root", None)
+    _ROT.suite_root = root
+    try:
+        yield root
+    finally:
+        _ROT.suite_root = prev
+
+
+@contextlib.contextmanager
+def rotation_root():
+    """一次补跑=一个全新临时 root（用完即删，防 /tmp 垃圾堆积）：轮转/done-sweep 的 apply
+    窗专用；dry 态到不了开窗处（旧纪律「dry 不起判据子进程」在前已 continue）。"""
+    root = tempfile.mkdtemp(prefix="cc-rotate-")
+    try:
+        with rotate_isolation(root):
+            yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def run_argv(argv, to):
     """执行判据；返回 (rc, out) 或 (None, 失败说明)。124=超时（不判=不 REJECT：判据跑得慢
-    是卡面问题，别拿假红驳卡）。"""
+    是卡面问题，别拿假红驳卡）。env=_rot_env()（BUG-TRAIN-REVERIFY-FLIP-1②）：默认窗外=None
+    逐字旧样继承；轮转/done-sweep/火车步②开窗内=套件族八键指向该次唯一 root——签名不动
+    （hostpin T0d 钉的是 base 签名，共享链假件照常 (argv, to) 接管）。"""
     try:
-        r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=to, creationflags=NO_WIN)
+        r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=to,
+                           creationflags=NO_WIN, env=_rot_env())
         return r.returncode, (r.stdout or b"").decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
         return 124, "TIMEOUT after %ss" % to
@@ -1023,6 +1075,11 @@ def done_sweep_scan(apply_mode, hours, n_cap, run_seq):
         n_s += 1
         # 补跑+落章全程 chdir 到卡仓（闸 _run_verify 在 do_verdict 内继承本进程 cwd——
         # 不同位=预检绿闸红 DONE-GATE-RED 每拍空响；chdir 失手则原样继承，两问同位不猜）。
+        # BUG-TRAIN-REVERIFY-FLIP-1②：本轮补跑（run_argv+do_verdict 闸内 _run_verify 复跑）
+        # 全程套线程局部独立套件根——手动 __enter__/__exit__ 只为不动既有 chdir try/finally
+        # 的重排面；finally 必关窗+删临时根（continue/异常同路）。
+        _rot_ctx = rotation_root()
+        _rot_ctx.__enter__()
         prev_cwd, cw = None, card_cwd(c)
         if cw:
             try:
@@ -1122,6 +1179,7 @@ def done_sweep_scan(apply_mode, hours, n_cap, run_seq):
             else:
                 mark_reject(detail, ATTRIB_BUILD)  # 无桥+真红特征+宿主无异地记录 = 就地归因驳
         finally:
+            _rot_ctx.__exit__(None, None, None)   # 关窗+删临时根（独立套件根生命周期=本轮补跑）
             if prev_cwd is not None:
                 os.chdir(prev_cwd)
     if sum(n_attr.values()):

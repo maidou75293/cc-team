@@ -50,7 +50,9 @@ RELEASE_FILES = ("cards_dag.py", "README.md", "pyproject.toml", "LICENSE",
                  # 漏收=公仓死图；readme-story-test T7 差分锁防再犯——引用资产必须同时在导出面）
                  # demo-docqa.gif=第一版动画（文档问答系统实录），业主 2026-11-04 23:5x「第一个动画也保留」
                  # ——原样存档不重制，T2d 锁其在册
-                 "demo.gif", "demo-docqa.gif")
+                 # architecture.svg=首屏架构图（面板四层形改公共口径，业主 2026-11-05 01:2x/01:4x
+                 # 「面板架构图进 README 置顶」「傻瓜式=架构图+两个视频+吹牛」），T7/T9a 双锁对账
+                 "demo.gif", "demo-docqa.gif", "architecture.svg")
 
 # Claude Code 官方安装面（2026-11-03 实查 code.claude.com/docs/en/setup）：
 # 原生安装免 Node、自带更新；npm 通道需 Node 22+，全平台兜底。

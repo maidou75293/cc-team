@@ -23,6 +23,12 @@
 #     refailed 出窗清账）或退避窗内 refailed 而交付已被外手进主干时，blocked 圈与 passed 队列
 #     两条外合入口都扫不到=旧式「火车让路」裸 continue 实为悬置等人工（REQ-OSS pm_reflip）。
 #     修：DONE 未合卡与辅账对表，上述形态同走 _ext_route→外合闭环（沙箱复验→verdict）。
+#   ④b **多锚扫描闸（MECH-MERGETRAIN-TIPSCAN-1，2026-11-05 立卡）**：fuse S3 有「锚..树尖同
+#     owner 候并 commit」多锚闸（BIND 案首拦 PM 定锚 77c5135a），火车通道原本无同闸——真合/
+#     外合闭环只处理卡面锚一笔=残缺半边进主干、红灯形同虚设。修：队列支判类后真合前、外合支
+#     转正前，一律过 _tipscan_gate——判定 import fuse s3_tipscan_filter/s3_tipscan_decide
+#     同源单点（禁拷贝），「候并」=锚..树尖且未进主干（树尖全外合=候并 0 照常转正）；命中=
+#     不并/不转正+「待合·多锚(TRAIN)」键（键级可 ack）+run_pm_wake 叫 PM 人工定锚——宁叫人不误并。
 #   ⑤**生效锁（版本钉）**：火车环每圈末比对常驻件「进程起时 vs 其命脉文件最后提交时刻」，
 #     进程起时早于提交时=未通电→dispatch.log 报警行 NOT-ENERGIZED <件> <滞后分钟>，
 #     白名单件自动 systemctl --user restart（业主 22:3x 裁定「修好≠生效，系统没生效才是
@@ -40,7 +46,9 @@
 #   报警消 / blocked 卡 PM 外合自动转正 VERIFIED——针=is_ancestor 外合扫描，撤针必悬置），
 #   各场景带撤针自证。流水尾自洽另立专锁 cc-team/tests/recon-tailrace-test.py
 #   （BUG-RECON-TAILRACE-1：双通道交错复现 + 撤针必红 + reconcile 判据一不放宽静态钉）。
-import json, os, re, subprocess, sys, tempfile, time
+#   多锚扫描闸另立专锁 cc-team/tests/mergetrain-tipscan-test.py（MECH-MERGETRAIN-TIPSCAN-1：
+#   多锚挡并线/挡残半转正+撤闸差分必红+单锚与树尖全外合照常放行；判据同源静态闸）。
+import contextlib, json, os, re, subprocess, sys, tempfile, time
 import os
 NO_WIN = 0x08000000 if os.name == "nt" else 0  # 黑窗口根除(业主2026-11-03)：无控制台父派生的子进程不再各自分配 conhost
 
@@ -326,6 +334,27 @@ def _tail(s, n=160):
     return " ".join((s or "").split())[-n:]
 
 
+def _fail_digest(out, cap=300):
+    """红因点名（BUG-TRAIN-REVERIFY-FLIP-1②）：all.sh 的点名红行（`FAIL: <套件>`/红条
+    `FAIL: <断言名>`/`=== fails=N` 汇总）都在**头部**，旧 _tail(160) 只留尾=PASS 噪声+计时行，
+    成员名被截没——00:36/00:54 两笔 refailed 事件同写「fails=1 skips=11」查无点名，红绿翻转
+    冤案的第一现场证据就是这么丢的。提取全部 FAIL/崩溃特征行，无点名素材才回落 _tail；
+    尾部 60 字保上下文（套件计时行在尾）。"""
+    keep = []
+    for l in (out or "").splitlines():
+        t = l.strip()
+        if not t:
+            continue
+        if (t.startswith("FAIL:") or (t.startswith("===") and "fails=" in t)
+                or "command not found" in t or "unbound variable" in t
+                or t.startswith("Traceback")):
+            keep.append(t[:200])
+    if not keep:
+        return _tail(out)
+    s = " | ".join(keep)
+    return "%s%s tail=[%s]" % (s[:cap], "…" if len(s) > cap else "", _tail(out, 60))
+
+
 def _run(cmd, cwd=None, to=None, env=None):
     try:
         r = subprocess.run(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
@@ -399,8 +428,14 @@ def card_verify_step(root, verify, recycle_mod):
     if berr:
         return None, "本卡判据 " + berr
     restore = _env_pin_exit()
+    # 套件根继承窗（BUG-TRAIN-REVERIFY-FLIP-1②）：步②判据子进程走 run_argv **继承面**，
+    # 若判据内含 all.sh/selftest 类套件，裸继承=默认 /tmp 固定名沙箱=与泳道 worker 并跑互踩；
+    # 本步套上 rotate_isolation(root)=子进程经 recycle._rot_env 拿本圈唯一 root（与步③ scope_env
+    # 同圈同值）。假件无此钩（getattr=None）=行为逐字旧样（REDAUTO 共享链零扰动纪律）。
+    iso = getattr(recycle_mod, "rotate_isolation", None)
     try:
-        rc, out = recycle_mod.run_argv([bashbin, "-c", verify], STEP_TIMEOUT)
+        with (iso(root) if callable(iso) else contextlib.nullcontext()):
+            rc, out = recycle_mod.run_argv([bashbin, "-c", verify], STEP_TIMEOUT)
     finally:
         restore()
     return rc, _tail(out or "")
@@ -426,22 +461,21 @@ def _scope_bash():
         return None, "宿主钉死异常: %r" % exc
 
 
-def scope_env(root):
-    """改动面锁子环境（MECH-TRAIN-ADR-1 三钉，全部落在本圈沙箱 root 下，逐圈唯一）：
-    ①CC_CODE_HOME=沙箱 wt——被测代码=本卡合并内容；旧行为裸继承，套件按 /mnt/c 缺省读
-      主仓**工作树**，测的根本不是待合物（PM 并发改树=结果随机）。
-    ②套件沙箱目录逐圈隔离（CC_ADR_HOME/CC_TEST_HOME/CC_RECGUARD_* 等）——旧硬编码
-      /tmp/cc-adr 全家共享，火车与泳道 worker 并跑互相 rm -rf（实锤：独占两跑各见
-      21/14 种污染签名；win 侧 12 连红全是陈旧态串染）。
-    ③CCSUITE_DIR=沙箱 root——all.sh 汇总日志面同圈隔离，两路 all.sh 并跑不再互踩。"""
-    # win 侧反斜杠串会被 bash 当转义、cd/mkdir 不认，全部正写（两宿通吃，POSIX 值逐字不变）
+SUITE_ROOT_KEYS = ("CC_ADR_HOME", "CC_ADR_REPO", "CC_TEST_HOME", "CC_TEST_REPO",
+                   "CC_ST_TMP", "CC_RECGUARD_HOME", "CC_RECGUARD_REPO", "CCSUITE_DIR")
+
+
+def suite_env(root, base=None):
+    """套件沙箱根隔离**单入口**（BUG-TRAIN-REVERIFY-FLIP-1②；键族本体=MECH-TRAIN-ADR-1 ②③）：
+    凡跑 tests/all.sh / selftest / adversary / recycle_guard 等「开跑即 rm -rf 自家沙箱」的
+    套件，宿主必须经本函数取一套逐次唯一的 suite root——散点硬编码 /tmp 固定名=并跑互踩
+    假红源（火车 scope_env 与 recycle 轮转/done-sweep 补跑窗共用本入口，禁另造副本）。
+    只回套件族八键（不含 CC_CODE_HOME/CC_TEAM_SRC——被测面锚由调用方自定：火车=沙箱树、
+    轮转=卡仓现势）；base 缺省=os.environ 快照。win 反斜杠会被 bash 当转义，全部正写。"""
     fwd = lambda p: p.replace("\\", "/")
-    wt = fwd(os.path.join(root, "wt"))
     root = fwd(root)
-    env = judge_env()          # 基座含出口钉 UTF-8（BUG-TRAIN-HOSTPIN-1②，与步①②同收口单源）
+    env = dict(base if base is not None else os.environ)
     env.update({
-        "CC_CODE_HOME": wt,
-        "CC_TEAM_SRC": fwd(os.path.join(wt, "cc-team")),
         "CC_ADR_HOME": fwd(os.path.join(root, "adr", "home")),
         "CC_ADR_REPO": fwd(os.path.join(root, "adr", "repo")),
         "CC_TEST_HOME": fwd(os.path.join(root, "st", "home")),
@@ -452,6 +486,25 @@ def scope_env(root):
         "CC_RECGUARD_REPO": fwd(os.path.join(root, "guard", "repo")),
         "CCSUITE_DIR": fwd(os.path.join(root, "ccsuite")),
     })
+    return env
+
+
+def scope_env(root):
+    """改动面锁子环境（MECH-TRAIN-ADR-1 三钉，全部落在本圈沙箱 root 下，逐圈唯一）：
+    ①CC_CODE_HOME=沙箱 wt——被测代码=本卡合并内容；旧行为裸继承，套件按 /mnt/c 缺省读
+      主仓**工作树**，测的根本不是待合物（PM 并发改树=结果随机）。
+    ②套件沙箱目录逐圈隔离——经 suite_env 单入口（BUG-TRAIN-REVERIFY-FLIP-1② 收口：
+      键族只在 suite_env 一处定义，火车/轮转/巡逻同源）。
+    ③CCSUITE_DIR=沙箱 root——同上经单入口，两路 all.sh 并跑不再互踩。"""
+    # win 侧反斜杠串会被 bash 当转义、cd/mkdir 不认，全部正写（两宿通吃，POSIX 值逐字不变）
+    fwd = lambda p: p.replace("\\", "/")
+    wt = fwd(os.path.join(root, "wt"))
+    env = judge_env()          # 基座含出口钉 UTF-8（BUG-TRAIN-HOSTPIN-1②，与步①②同收口单源）
+    env.update({
+        "CC_CODE_HOME": wt,
+        "CC_TEAM_SRC": fwd(os.path.join(wt, "cc-team")),
+    })
+    env.update(suite_env(fwd(root), env))   # 套件族八键=单入口（键值与旧 scope_env 逐字等价）
     return env
 
 
@@ -485,13 +538,13 @@ def scope_lock_step(root, changed, run=None):
     for c in cmds:
         rc, out = run([bashbin, "-c", c], cwd=os.path.join(root, "wt", "cc-team"), env=env)
         if rc != 0:
-            return rc or 1, "改动面锁 %s rc=%s %s" % (c, rc, _tail(out))
+            return rc or 1, "改动面锁 %s rc=%s %s" % (c, rc, _fail_digest(out))
     return 0, "改动面锁绿（%s）" % "+".join(cmds)
 
 
 # ---------- ① 交卷即验 ----------
 
-def _ext_route(g, cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, state=None):
+def _ext_route(g, cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, state=None, cards=None):
     """增补共用出口（BUG-TRAIN-HOSTPIN-1 增补，PM 13:0x 现证）：DONE 未合卡、交付已在主干、
     辅账又不在外合扫描两入口面（blocked 圈/passed 队列皆扫不到缺账/refailed 形态）→ 纳入
     _ext_merge_closure 同一闭环，不得悬置等人工。缺账时 apply 下补锚：转正过=stage=merged(外线)
@@ -500,7 +553,7 @@ def _ext_route(g, cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, st
     卡必悬置零转正（train-hostpin-test T5 双相实证）。"""
     if apply and state is not None and cid not in state["cards"]:
         state["cards"][cid] = rec                    # 缺账补锚（转正成败都留账面痕迹）
-    res = _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git)
+    res = _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, state, cards)
     if res == "ok":
         g["extmerged"] = g.get("extmerged", 0) + 1
     elif res == "fail":
@@ -537,7 +590,7 @@ def stage1_verify(cards, state, team, apply, log, recycle_mod, git=None):
                     refx = main_ref(repo, git) if (repo and commit) else None
                     if refx and is_ancestor(repo, commit, refx, git) is True:
                         _ext_route(g, cid, rec, c, repo, refx, team, apply, log,
-                                   recycle_mod, git, state)
+                                   recycle_mod, git, state, cards)
                     continue                 # 窗内到此为止（外合已试/未外合），不落②重验
                 state["cards"].pop(cid, None)  # 出窗清账重走①（交卷内容没变=同 commit 重验）
         if not commit or not repo:
@@ -560,8 +613,16 @@ def stage1_verify(cards, state, team, apply, log, recycle_mod, git=None):
             # verdict 通道收口」自我破绽：done-sweep 只认账、外合转正只从 blocked 圈/passed 队列
             # 起，两入口都扫不到缺账/refailed=悬置等人工（REQ-OSS 12:5x 账 vanish、PM 手工补登）。
             # 修：纳入外合闭环同式（外线 tip 沙箱复验→cmd_verdict PASS 正式转正，未过下圈重试）。
-            _ext_route(g, cid, {"commit": commit, "repo": repo}, c, repo, ref,
-                       team, apply, log, recycle_mod, git, state)
+            # MECH-MERGETRAIN-TIPSCAN-1 收口配套：账上已有 rec 时复用该对象（素材字段按本次
+            # 交卷归一），closure 转正就地 update 才能落进辅账——多锚闸挡下后 PM 补齐外合、
+            # 下圈转正的 stage=merged(外线) 必落账可见；旧形每圈现造新 dict 传入、_ext_route
+            # 「仅在缺账时存账」=更新写在环初快照对象外随手丢（看板 14 天「并入哪个提交」失指）。
+            if rec is None:
+                rec = {"commit": commit, "repo": repo}
+            else:
+                rec.update({"commit": commit, "repo": repo})
+            _ext_route(g, cid, rec, c, repo, ref,
+                       team, apply, log, recycle_mod, git, state, cards)
             continue
         g["seen"] += 1
         if fresh >= VERIFY_BATCH:
@@ -741,19 +802,157 @@ def _conflict_closure(rec, cid, team, log):
     return n
 
 
-def _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git):
+# ---------- MECH-MERGETRAIN-TIPSCAN-1 · 多锚扫描闸（火车侧对齐 fuse S3，禁单锚并残缺半边） ----------
+# 病根：fuse S3 多锚闸（MECH-FUSE-S3-TIPSCAN-1）拦下 BUG-BIND-PMCLAIM-EXEMPT-1 单锚自动并
+#   （锚 800e052d 外另有证据文 f7fe6a22，PM 定锚树尖外合 77c5135a 脱身），而火车通道无同闸：
+#   passed 队列真合/外合闭环只并（或只转正）卡面锚一笔=缺半边进主干，S3 红灯形同虚设。
+#   （src=MECH-FUSE-S3-TIPSCAN-1 卡面射程边界『火车侧同闸若要收，另卡另议』；docs/机制-fuse处置
+#   -S3撞车合流-20261103.md 二轮§五-1 遗留面；本卡收口，另 T9a 卡面遗留面『TIPSCAN 卡面射程
+#   之外』仍另卡另议。）
+# 纪律：判定=s3_tipscan_filter/s3_tipscan_decide import fuse **同源单点**（卡面禁拷贝——两处
+#   漂移=两世界）；唤人=run_pm_wake 同函数（冷却 state=火车辅账 last_pm_wake，env
+#   FUSE_WAKE_MIN_INTERVAL_MIN 默认 10min 与 fuse 同闸）；events 兜底面=_done_events_count 同式。
+#   探测面为火车自带（两处与 fuse 探测差，判义不变）：①log 出全哈希（fuse "%h" 短哈希仅供展示，
+#   火车需全哈希对主干做「已并进=不算候并」剔除）；②「候并」口径=锚..树尖后续 commit 且未进
+#   主干——外合闭环支 PM 把树尖全部外合时候并=0 照常转正（77c5135a 实形），只外合卡面锚=残半，
+#   证据文仍候并在场必挡。队列支锚未并时锚..树尖天然全在主干外，结果与 fuse 同。
+def _fuse_judge():
+    """fuse 纯判据懒加载（stdlib-only 导入零副作用——slot-churn-test:315 同源先例在册）。"""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import fuse
+    return fuse
+
+
+def _tipscan_followups(c, repo_used, ref, team, git):
+    """卡 repo 扫锚..树尖后续 commit（纯探测；判义全在 fuse s3_tipscan_*，本函数零判义）。
+    扫描域与 fuse _s3_tipscan_scan 同式：卡面交付仓 c["repo"]+交卷支 done_anchor.branch；
+    支名不可解/记录缺失=退该仓 HEAD；仓失踪=在账本所依仓根复核同名支（worktree 共享对象库）。
+    返回 (tip_known, [(full_hash, subj), ...])；tip==锚 → (True, [])=正常单锚形；
+    两仓都探不出 → (False, [])（decide 走 events 兜底面）。"""
+    commit = str((c or {}).get("commit") or "").strip()
+    if not commit:
+        return True, []
+    anchor = (c or {}).get("done_anchor") or {}
+    branch = str(anchor.get("branch") or "")
+    if branch in ("", "HEAD", "detached") or branch == ref:
+        branch = ""
+    repos, seen = [], set()
+    for rp in (str((c or {}).get("repo") or "").strip(), repo_used, _repo_root(team)):
+        ap = os.path.abspath(rp) if rp else ""
+        if ap and ap not in seen and os.path.isdir(ap):
+            seen.add(ap)
+            repos.append(rp)
+    for rp in repos:
+        rc, full = git(rp, "rev-parse", "--verify", commit + "^{commit}")
+        full = (full or "").strip()
+        if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", full):
+            continue
+        for r2 in ([branch] if branch else []) + ["HEAD"]:
+            rc2, t2 = git(rp, "rev-parse", "--verify", r2 + "^{commit}")
+            t2 = (t2 or "").strip()
+            if rc2 != 0 or not re.fullmatch(r"[0-9a-f]{40}", t2):
+                continue
+            if t2 == full:
+                return True, []                      # 锚即树尖=正常单锚形
+            rc3, _ = git(rp, "merge-base", "--is-ancestor", full, t2)
+            if rc3 == 0:
+                rc4, out = git(rp, "log", "--max-count=200",
+                               "--pretty=format:%H\x09%s", "%s..%s" % (full, t2))
+                if rc4 != 0:
+                    return False, []
+                live = []
+                for ln in (out or "").splitlines():
+                    h, _, subj = ln.partition("\t")
+                    h = h.strip()
+                    if not h:
+                        continue
+                    rc5, _ = git(rp, "merge-base", "--is-ancestor", h, ref)
+                    if rc5 != 0:            # 已进主干的不算候并；查不了≠不在=照算（宁红不猜）
+                        live.append((h, subj.strip()))
+                return True, live
+    return False, []
+
+
+def _tipscan_ledger_attributed(cid, followups, cards):
+    """泳道叠卡剔除（火车侧台账知识，fuse 判义零触碰——卡面①同源不破）。锚后 commit 若恰是
+    **他卡在册交卷锚**（cards 台账 DONE/VERIFIED 卡 commit，长短哈希前缀互认），那是下一张卡
+    的交付、非本卡候并——单泳道顺次叠卡是火车在册常态形态（merge-train-check S2 实形：
+    头卡 A 绿并、次卡 B 留队；done 锚自报≠树尖 的 WARN「树尖比自报多 N 笔…照过」即此族）。
+    fuse S3 看不到这层是时序使然（done 扫描时他卡尚未在册）。剔除后残余（无 token 又无归属
+    的 commit）仍进 fuse「宁红不猜」留档——真残半（专锁 M 场同卡后续笔）照挡不误。"""
+    if not followups:
+        return followups
+    anchors = set()
+    for oid, cc in (cards or {}).items():
+        if oid == cid or not isinstance(cc, dict):
+            continue
+        if str(cc.get("status") or "") not in ("DONE", "VERIFIED"):
+            continue
+        oc = str(cc.get("commit") or "").strip().lower()
+        if len(oc) >= 7:
+            anchors.add(oc)
+    if not anchors:
+        return followups
+    out = []
+    for h, subj in followups:
+        hl = (h or "").lower()
+        if any(hl.startswith(a) or a.startswith(hl) for a in anchors):
+            continue
+        out.append((h, subj))
+    return out
+
+
+def _tipscan_gate(cid, c, repo, ref, team, apply, log, state, cards, git, phase):
+    """多锚扫描闸：命中=挡（队列支挡并线 / 外合支挡转正），挂「待合·多锚(TRAIN) 卡面锚外另有
+    N 笔候并」键（ccards.alerts 键级可 ack）+ run_pm_wake 叫 PM 定锚——宁叫人不误并，与 fuse
+    S3 同语义同文案族。phase 只进可见流水尾，不进键（两支一卡一铃）。返回 True=挡。
+    摘本闸=mergetrain-tipscan-test B 场差分必红：M 场的「不并」全挂在这道闸上。"""
+    F = _fuse_judge()
+    tip_known, followups = _tipscan_followups(c, repo, ref, team, git)
+    # 先过台账归属（他卡在册交卷锚=叠卡常态，见 _tipscan_ledger_attributed 注），残余才进
+    # fuse 判据——归属过滤语义与 fuse「只别卡号 token 去」同一族，只是无 token 者靠台账认出。
+    followups = _tipscan_ledger_attributed(cid, followups, cards)
+    kept = F.s3_tipscan_filter(cid, followups)
+    done_n = F._done_events_count({"home": team}, cid) if not tip_known else 0
+    n_sus, src = F.s3_tipscan_decide(kept, tip_known, done_n)
+    if n_sus <= 0:
+        return False
+    key = "待合·多锚(TRAIN) %s 卡面锚外另有 %d 笔候并 commit(%s面)——多锚卡禁单锚并线/转正，PM 请人工定锚" % (
+        cid, n_sus, src)
+    _stale_alarm(team, log, key, key, apply=apply)
+    if not apply:
+        return True                                  # dry=只点名（报警/事件/唤醒零落账，同环纪律）
+    head_h, head_s = (kept or [("-", "树尖读不出；同卡交卷流水多笔")])[0]
+    git_ev_now(team, cid, "MERGE-TRAIN-TIPSCAN 多锚存疑(%s面·%s) 锚外%d笔 首=%s %s 锚=%s" % (
+        src, phase, n_sus, head_h[:12], head_s[:60], str((c or {}).get("commit") or "")[:12]))
+    wcfg = {"state": state if isinstance(state, dict) else {}, "home": team,
+            "wake_min_interval": F.env_num("FUSE_WAKE_MIN_INTERVAL_MIN", 10),
+            "apply": True, "cards": cards or {}}
+    F.run_pm_wake(wcfg, "TRAIN(%s) 多锚存疑：%s 卡面锚 %s 之外同 owner 另有 %d 笔候并 commit(%s面)——"
+                        "禁单锚并线/转正，请扫泳道树尖人工定锚（REQ-MERGE-TRAIN-1·MECH-MERGETRAIN-TIPSCAN-1）" % (
+                        phase, cid, str((c or {}).get("commit") or "")[:12], n_sus, src), "TRAIN")
+    return True
+
+
+def _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, state=None, cards=None):
     """MECH-BLOCKED-EXTMERGE-1 外合自动转正（blocked 圈扫描与队列 passed 外合分支共用）：
     交付已被火车外手（PM/人工 merge）进主干（is_ancestor=True）→ 外线 tip detach 沙箱里
     复跑本卡判据（线573 同式：_run_verify 继承进程 cwd，判据位=外合后内容）→ cmd_verdict
     PASS 走正式通道（REQ-MERGE-GATE-1 在外线已天然满足，不旁路不裸改）。
     **转正过了才翻 stage=merged(外线)**——done-sweep 对 HELD_STAGES 让路（merged 也让），
     先翻账=把卡悬得更死；转正失败维持现 stage 下圈重试（判据红/沙箱起不来/闸重载拒都响亮）。
-    dry=只点名零写（同环纪律）。返回 "ok"/"fail"/"dry"。"""
+    dry=只点名零写（同环纪律）。返回 "ok"/"fail"/"dry"。
+    MECH-MERGETRAIN-TIPSCAN-1：转正前先过多锚扫描闸——卡面锚外同 owner 候并未进主干
+    （PM 只外合了锚、证据文还在泳道）=残半交付，不转正+「待合·多锚(TRAIN)」键+叫 PM；
+    树尖已全外合（77c5135a 实形）候并=0 照常转正。state/cards 供闸唤 PM 冷却与痕。"""
     commit = str(rec.get("commit") or (c or {}).get("commit") or "")
     if not apply:
         log("MERGE-TRAIN-EXT %s: (dry)交付已被外手合入 %s → 会起外线 tip 沙箱复跑判据 + "
             "verdict PASS 正式转正" % (cid, ref))
         return "dry"
+    if _tipscan_gate(cid, c, repo, ref, team, apply, log, state, cards, git, "外合转正"):
+        return "fail"                                 # 残半外合不盖章；辅账维持现 stage 下圈重试
     tip = tip_of(repo, ref, git)
     if not tip:
         log("MERGE-TRAIN-EXT-SKIP %s: 外线=%s 但 tip 取不到 → 不转不假账，下圈重试" % (cid, ref))
@@ -799,15 +998,32 @@ def _stale_alarm(team, log, key, line, apply=True):
         log("WARN: 报警落聚合账失败(%r)——可见行已发" % exc)
 
 
+def _reval_hold(rec, commit, tip0):
+    """同输入不重掷（BUG-TRAIN-REVERIFY-FLIP-1②b）：队列复验三步的输入=（本卡 commit,
+    主干 tip0）二元组——两者未变则沙箱内容逐字同（本次事件 E1/E2 隔离串行两跑**同红同签名**
+    实证确定性），旧式每圈重掷骰子=白烧 ~7min 沙箱+每圈一笔同文案 refailed 事件，正是
+    「同卡同主干 sha 红绿翻转」观感的放大器（passed 出自①面、refailed 出自②面，两宿主同
+    事件词面+反复重跑=读数混乱）。复用条件=辅账 reval_key 与本轮 (commit,tip0) 一致且仍处
+    refailed；主干再进/卡再交=键变→照常全量重验。宁可只省重跑，不省判定：首红判定与事件
+    落账面零改动，复用圈仅续滞留龄报警（queue_of 照排）。"""
+    key = "%s@%s" % ((commit or "")[:12], (tip0 or "")[:12])
+    return bool(rec.get("reval_key")) and rec.get("reval_key") == key \
+        and rec.get("stage") == "refailed"
+
+
 def stage2_merge(cards, state, team, apply, log, recycle_mod, git=None, run=None):
     """队内逐张（每圈 ≤MERGE_BATCH）：干跑 merge-tree→撞车=blocked 不自动拆；干净=试合沙箱
     复验→绿=真并 merge --no-ff + verdict PASS 落 VERIFIED；红=打回①（归因「队列复验FAIL@新主干」）。
     滞留 >STALE_MIN 分钟（候合或撞车）→报警行。候合/撞车卡每圈探 is_ancestor：交付已被
     PM 外合入主干→外线沙箱判据复跑 + verdict PASS 自动转正（_ext_merge_closure，
-    MECH-BLOCKED-EXTMERGE-1——已外合不再冲撞车铃，转正未过另亮 EXT-FAILED）。"""
+    MECH-BLOCKED-EXTMERGE-1——已外合不再冲撞车铃，转正未过另亮 EXT-FAILED）。
+    MECH-MERGETRAIN-TIPSCAN-1：干跑净后真合前过 _tipscan_gate 多锚扫描闸（判据 import fuse
+    同源单点），锚外候并≥1 笔=不并+「待合·多锚(TRAIN)」键+唤 PM 定锚；外合闭环同闸挡残半
+    转正。计数进 n["tipscan"]。"""
     from ccards.config import git as _G
     git = git or _G
-    n = {"merged": 0, "blocked": 0, "refail": 0, "stale": 0, "probed": 0, "extmerged": 0}
+    n = {"merged": 0, "blocked": 0, "refail": 0, "stale": 0, "probed": 0, "extmerged": 0,
+         "tipscan": 0}
     q = queue_of(cards, state)
     for cid, pos, age in q:
         if age > STALE_MIN:
@@ -826,7 +1042,7 @@ def stage2_merge(cards, state, team, apply, log, recycle_mod, git=None, run=None
         ref = main_ref(repo, git) if (repo and commit) else None
         anc = is_ancestor(repo, commit, ref, git) if ref else None
         if anc is True:                 # PM 已在火车外合入：自动转正，不再冲「撞车滞留」错铃
-            res = _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git)
+            res = _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, state, cards)
             if res == "ok":
                 n["extmerged"] += 1
             elif res == "fail":
@@ -861,7 +1077,7 @@ def stage2_merge(cards, state, team, apply, log, recycle_mod, git=None, run=None
             continue
         anc = is_ancestor(repo, commit, ref, git)
         if anc is True:               # 有人在火车外合了：外线自动转正（旧文「交 done-sweep 转正」
-            res = _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git)
+            res = _ext_merge_closure(cid, rec, c, repo, ref, team, apply, log, recycle_mod, git, state, cards)
             if res == "ok":
                 n["extmerged"] += 1
             continue                  # 转正未过维持 passed，下圈再试（候合滞留铃如实响）
@@ -880,6 +1096,18 @@ def stage2_merge(cards, state, team, apply, log, recycle_mod, git=None, run=None
             log("MERGE-TRAIN-BLOCKED %s: 待合·撞车（干跑 merge-tree 冲突=%s）→ 不自动拆，等泳道/PM"
                 % (cid, files))
             n["blocked"] += 1
+            continue
+        if _reval_hold(rec, commit, tip0):                       # 同输入复用（见 _reval_hold 定义块）
+            n["refail"] += 1
+            log("MERGE-TRAIN-REVAL-HOLD %s: 同输入(卡%s@主干%s)上圈复验已红[%s:%s]→ 不重掷维持打回"
+                "（主干再进/卡再交才重验）" % (cid, commit[:8], tip0[:8],
+                                             rec.get("fail_step") or "?", _tail(rec.get("fail_detail") or "", 80)))
+            continue
+        # MECH-MERGETRAIN-TIPSCAN-1（与 fuse S3 同位：判类后、真合前）：干跑净=能合≠完整。
+        # 卡面锚外同 owner 树尖还有候并 commit 的多锚半成品，按单锚并线=残缺半边进主干
+        # （BIND 案锚 800e052d 缺证据文 f7fe6a22 即此形）。命中=不并+键+叫 PM，宁叫人不误并。
+        if _tipscan_gate(cid, c, repo, ref, team, apply, log, state, cards, git, "队列并线"):
+            n["tipscan"] += 1
             continue
         ch = changed_files(repo, ref, commit, git)
         root, sb_sha = sandbox_materialize(repo, probe["tree"], tip0, commit, cid, git, log)
@@ -906,10 +1134,12 @@ def stage2_merge(cards, state, team, apply, log, recycle_mod, git=None, run=None
                 cur_now = tip_of(repo, ref, git)
                 tip_txt = cur_now[:8] if cur_now else "?"
                 if i == 1 and rc == 124:
+                    rec.pop("reval_key", None)   # 超时≠判决：作废复用锚，下圈重掷（防拿旧红冒充本圈判定）
                     log("MERGE-TRAIN-TIMEOUT %s: 沙箱判据超时 → 不判不驳，下圈重判" % cid)
                     continue
                 rec.update({"stage": "refailed", "fail_ts": time.time(), "fail_at": nowz(),
-                            "fail_step": step_name, "fail_detail": t})
+                            "fail_step": step_name, "fail_detail": t,
+                            "reval_key": "%s@%s" % (commit[:12], tip0[:12])})
                 git_ev_now(team, cid,
                            "stage=refailed@%s 队列复验FAIL@新主干@%s[%s:%s]" % (commit[:12], tip_txt, step_name, t))
                 log("MERGE-TRAIN-REQUEUE %s: 队列复验FAIL@新主干@%s（步=%s rc=%s tail=[%s]）→ 打回①重验"
