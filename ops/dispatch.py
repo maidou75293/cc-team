@@ -68,6 +68,14 @@ OPS = os.path.dirname(os.path.abspath(__file__))
 TEAM = os.path.dirname(OPS)                                    # cc-team 根（WSL 视角 /mnt/c/...）
 sys.path.insert(0, OPS)                                        # ops 同目录件（memgate）
 sys.path.insert(0, TEAM)
+# 公仓 CI 首绿实锤（11-04 windows runner cp1252）：93.5 以 `python3 -I dispatch.py --selftest`
+# 起本件，-I=-E 不吃 PYTHONIOENCODING，中文案名 print 即 charmap 崩（红文案「锚改动伤及」实为
+# 编码崩非锚伤）。出口钉 utf-8=ctrld/recycle 同款（MECH-GBKDECODE-BOMB-1 推广面），宿主码页免疫。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import memgate                                                 # MECH-MEMGATE-1 水位探针（同面 recycle.py 亦 import 它）
 import pool                                                    # REQ-POOL-ELASTIC-1 弹性工位池（FIFO/资源闸/建收桌）
 from ccards import config as _cfg                              # CC_TEAM_HOME 感知的账本路径

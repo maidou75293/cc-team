@@ -873,7 +873,7 @@ d = json.load(open(sys.argv[1], encoding="utf-8"))
 hit = [e for e in d["alerts"].values() if "无泳道映射" in e["msg"] and e["msg"].endswith("0660")]
 assert hit and hit[0]["count"] >= 1, d
 PYEOF
-$CARD ack 0660 --who PM >/dev/null 2>&1 && ok "ack 命中落痕" || bad "ack 失败"
+$CARD ack 0660 --who "PM 用例销账：0660 系本沙箱注入观察对象非真告警" >/dev/null 2>&1 && ok "ack 命中落痕(R3 归因注记形过闸)" || bad "ack 失败"
 expect_fail ack 9999无此键
 $CARD ack --list >$ST_TMP/ackl.out 2>&1
 grep -q "0660" $ST_TMP/ackl.out && bad "ack后0660仍开放" || ok "0660已闭环(开放项视图)"
@@ -2512,11 +2512,15 @@ n93=0
 # 撤 Git Bash 排除段=T5c红——单故障面「恰红1」是 T5b/T5c 出生前的旧拓扑）。期望数按族钉死：
 # env=3 其余=1；数字仍是精确断言（摘掉任一段则 HAS-RED 数对不上=本项红），未放宽。
 exp_red=1
+# MECH-PLATFORM-EXPECT（11-04 公仓 CI 实锤）：fault=env 的 T5b/T5c 是 Windows 任务形 PATH 专属
+# 守卫（%SystemRoot%/Git Bash 解析），posix 宿主上物理不适用、只剩中性的 T5 拒绝段会响 ⇒
+# 期望红数按宿主形态钉（win=3 posix=1）。仍是精确断言（摘掉任一段数字对不上=红），不是放宽。
+exp93env=1; case "$(uname -s 2>/dev/null)" in *NT*|*MINGW*|*MSYS*|*CYGWIN*) exp93env=3;; esac
 for f93 in schedule argv hb board env; do
   python3 -I "$CTR93" --selftest --fault "$f93" >$ST_TMP/s93f.out 2>&1
   rc93=$?
   redn93=$(grep -c '^FAIL' $ST_TMP/s93f.out)
-  exp_red=1; [ "$f93" = "env" ] && exp_red=3
+  exp_red=1; [ "$f93" = "env" ] && exp_red="$exp93env"
   [ $rc93 -eq 1 ] && [ "$redn93" = "$exp_red" ] && grep -q "HAS-RED($exp_red) fault=$f93" $ST_TMP/s93f.out     || { bad "93.2 fault=$f93 应恰红${exp_red}项rc1（实 rc=$rc93 fails=$redn93）"; n93=1; }
 done
 [ $n93 -eq 0 ] && ok "93.2 五注入各恰红其位(schedule/argv/hb/board=1, env=子环境族三件套)"
