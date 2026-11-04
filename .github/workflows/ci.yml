@@ -14,6 +14,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
+      # windows runner 默认 charmap 码页：中文测试输出 print 即 UnicodeEncodeError（首绿实锤 08:59）
+      PYTHONIOENCODING: utf-8
       # 测试沙箱会真起 git 仓提交；runner 默认无身份→GIT_* 环境变量全局兜底（作者+提交者四件套）
       GIT_AUTHOR_NAME: ci
       GIT_AUTHOR_EMAIL: ci@ci.local

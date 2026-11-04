@@ -26,7 +26,9 @@ import subprocess
 import sys
 import tempfile
 
-RELEASE_DIRS = ("ccards", "ops", "tests", "deploy", ".github")
+# bin=起会话核 run-cc.ps1（BUG-RUNNER-GONE-1 后为引擎命脉；缺它干净克隆车队起不来，
+# 且 dispatch selftest T11 的「正本在仓」断言必红——2026-11-04 CI 首绿前补账）
+RELEASE_DIRS = ("ccards", "ops", "tests", "deploy", ".github", "bin")
 RELEASE_FILES = ("cards_dag.py", "README.md", "pyproject.toml", "LICENSE",
                  "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", ".gitattributes")
 

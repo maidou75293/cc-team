@@ -5,6 +5,7 @@ CONTRIBUTING.md
 LICENSE
 README.md
 SECURITY.md
+bin/run-cc.ps1
 cards_dag.py
 ccards/__init__.py
 ccards/alerts.py
