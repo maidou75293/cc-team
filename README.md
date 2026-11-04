@@ -1,0 +1,221 @@
+# cc-team — 文件台账式多智能体协同引擎
+
+一个**纯标准库、零外部依赖**的引擎：把工作单元登记成带状态机的「卡」（账本=JSON 文件+事件日志），
+把执行者编排成「泳道」（每个泳道绑定一棵 git worktree），外接**任意命令行终端 agent**
+（Claude Code、Codex CLI 或同形态工具）作为泳道 worker 自动开工、验收、回收。
+所有状态都是人类可读的文件，断网、断电、进程被杀，账本不丢。
+
+> 本文件是通用发行版。现网运营记录（历史裁定、验收数字、运维台账）留在源仓库 `docs/`，
+> 不随发布包分发。
+
+## 5 分钟上手
+
+```bash
+# 1) 取包（git clone 本仓库，或 pip 安装发布包后 --engine-home 指向源码树）
+cd cc-team
+
+# 2) 初始化你的工作仓（生成目录骨架 + 默认配置 + 计划任务/cron 模板 + 自检）
+python -I ccards/oss_cli.py init --dir /path/to/your-repo
+#    （pip 安装后可直接用控制台命令： cc init --dir /path/to/your-repo）
+#    init 会顺带检测终端 agent（Claude Code）：没装只打印官方安装命令，不静默下载；
+#    想让引擎代执行安装（执行前明示完整命令）： cc init --dir . --install-agent
+#    装完首次使用：终端跑 `claude` 走浏览器 OAuth 登录（需付费计划）或设 ANTHROPIC_API_KEY。
+
+# 3) 跑一遍内置红绿锁（全部断言自包含，只写临时沙箱，不碰任何真实账）
+python -I tests/oss-release-check.py        # 发布自检（本包边界/敏感/默认等价）
+bash tests/all.sh                            # 五套机制回归（账本/对抗/回收/判活/CC环境检测）
+
+# 4) 登记第一张卡并认领
+python -I cards_dag.py create REQ-DEMO-1 --title 示例卡 --verify "true" --files "src/"
+python -I cards_dag.py claim REQ-DEMO-1 --owner lane-a
+python -I cards_dag.py progress REQ-DEMO-1 "开工第一拍" --lane lane-a --epoch 1 --ring 1
+python -I cards_dag.py done REQ-DEMO-1 --owner lane-a --commit <hash> --repo <worktree>
+```
+
+接入终端 agent（可选，自动派单所需）：
+- worker 起会话命令 = 配置项 `engine.runner_cmd`（默认值指向一个「把提示词喂给终端 agent」的
+  包装脚本样例，`cc init` 会生成模板，改成你环境里的真实命令即可）；
+- 会话结束自动结账 = 在你的 agent 的 Stop/退出钩子里调用 `ops/check_exit.py`
+  （命令模板同样由 `cc init` 生成）。
+
+## 概念与账本
+
+| 概念 | 是什么 |
+|---|---|
+| 卡 (card) | 一个有始有终、可验收的工作单元。状态机：OPEN→CLAIMED→DONE→VERIFIED（可 HOLD/BLOCKED/CANCELED）。 |
+| 账本 | `state/graph.json`（当前态）+ `state/events.log`（全部转移，追加式）+ `claims/<卡>/claim.json`（认领凭证）。 |
+| 泳道 (lane) | 执行者位。每道绑定一个 git worktree（`wf-<道名>`），同一时刻一张卡只属于一个道。 |
+| 任期 (epoch) | 同一道第几次上岗。回收重派后旧任期的心跳作废，防止僵尸 worker 续牌。 |
+| 圈号 (ring) | 任期内单调递增的序号，配合时间戳判定「还在干活」。 |
+| 心跳 (beat) | `cards_dag.py progress`：每任期内周期打卡；超 `thresholds.beat_stale_min` 未打卡=断流，回收器自动 release。 |
+| 验收 (verdict) | 卡的 `--verify` 命令串由 done 后统一实跑，绿了才 VERIFIED。 |
+
+```
+cc-team/
+├── cards_dag.py          # 账本 CLI（唯一写入口，带写锁）
+├── ccards/               # 引擎包：config(单配置入口) / cli(账本命令) / 支撑模块
+├── ops/                  # 常驻环：派发器、控制进程、回收器、看门、钩子、看板适配等
+├── tests/                # 红绿锁套件（全部沙箱自包含）
+├── state/ logs/ claims/  # 现账（运行时生成；★不在发布包内，见下）
+└── config.toml           # 可选：文件层配置（★不在发布包内，由 cc init 生成）
+```
+
+## 状态=属主与迁移矩阵（同源机器读区，#80 锁逐行对账）
+
+> 下面四张标记表（`STATE-OWNER / STATE-TERMS / STATE-MATRIX / STATE-FIELDS`）是**机器契约**：
+> `tests/state_std_test.py` 按标记切表，与唯一数据源 `ccards/statemachine.py`
+> （TERMS / OWNER_MATRIX / TRANSITIONS / REQUIRED_FIELDS）逐行比对——改代码数据必须同批改表，
+> 只改一头锁就红。表内文案勿动；表外说明可自由改写。
+
+### 状态=属主+出口矩阵（回答「这张卡现在该谁处理、出口是什么」）
+
+<!-- STATE-OWNER-BEGIN -->
+| 状态 | 术语 | 属主（这张卡现在该谁动） | 出口 | 看护（停摆找谁） |
+|---|---|---|---|---|
+| DRAFT | 草稿 | PM | 补全 verify 后 set --status OPEN 发布 | 无自动看护；停摆归 PM——新增机制必须先自答「看护哪个状态」才许上岗 |
+| OPEN | 待领 | dispatcher（发单侧） | claim/start → CLAIMED | 队列/next/ccops tick 报可领；无泳道映射的就绪卡由 dag ALARM 点名 |
+| CLAIMED | 在制 | 本卡 owner（泳道 worker） | done → DONE | ops/recycle.py STALLED 心跳看护（pid 双侧核验+静默阈；session 档只 WARN） |
+| HOLD | 挂起 | 挂 hold/deps 的人 | deps 全 DONE 且无人工 hold 时 thaw → OPEN | ccops tick 每圈自动 thaw；缺 verify 的解冻被闸拒并 ALARM |
+| DONE | 待验 | Verifier（校验环节） | verdict PASS → VERIFIED / REJECT → OPEN | MECH-DONE-SWEEP-1 滞留扫描（复用勿重复造）；账龄锚=卡面 done_at |
+| VERIFIED | 已验收 | — | 无（例外通道 verdict REJECT 回 OPEN，审计留痕） | 终态，不再照看 |
+| CANCELED | 已作废 | — | 无（例外通道 PM set → OPEN 复活，需 verify） | 终态，不再照看 |
+<!-- STATE-OWNER-END -->
+
+### 术语表（每态一个中文术语；看板/卡面/文档文案统一，禁自造词）
+
+<!-- STATE-TERMS-BEGIN -->
+| 状态 | 中文术语（定版） | 别名（禁自造，见即改） |
+|---|---|---|
+| DRAFT | 草稿 | 草案 |
+| OPEN | 待领 | 待派 |
+| CLAIMED | 在制 | 在做／开工 |
+| HOLD | 挂起 | 冻结 |
+| DONE | 待验 | 交卡／已收工 |
+| VERIFIED | 已验收 | 验完 |
+| CANCELED | 已作废 | 取消 |
+<!-- STATE-TERMS-END -->
+
+### 迁移矩阵（单一数据表=全部合法边；代码闸 `require_edge` 与 selftest 断言同源）
+
+<!-- STATE-MATRIX-BEGIN -->
+| 从 | 到 | 通道 | 说明 |
+|---|---|---|---|
+| - | DRAFT | create | PM 起草（允许无判据；cli choices 同步只放 DRAFT/OPEN/HOLD） |
+| - | OPEN | create | 立卡即待领（OPEN 必带 verify，闸门已锁） |
+| - | HOLD | create | 挂起注册卡（PROC-LEDGER-1 收编在途交付用） |
+| OPEN | CLAIMED | claim | dispatcher 取活：verify+deps+lanes+双锁全闸；写 claimed_at |
+| DRAFT | CLAIMED | start | PM 直做卡（需 --verify 补判据） |
+| OPEN | CLAIMED | start | PM 直做卡/临时泳道 |
+| HOLD | CLAIMED | start | PM 直做卡（需先清 hold 字段） |
+| CLAIMED | DONE | done | worker 勾卡：现场验 commit+files 域；写 done_at；清双锁 |
+| DONE | VERIFIED | verdict PASS | Verifier 机器复跑卡面 verify 绿=落章（CC_AUTO_VERIFY 时 done 锁外拉起同路） |
+| DONE | OPEN | verdict REJECT | 打回重做：清 owner/commit/output/claimed_at/done_at，回队头 |
+| VERIFIED | OPEN | verdict REJECT | 验收后打回，同上（红检撤章的唯一下行通道） |
+| VERIFIED | VERIFIED | verdict --reverify | 转正自环：仅 Verifier 身份+机器复跑绿，只换 verdict 痕 |
+| CLAIMED | OPEN | release | 回收：清 owner/claimed_at，回队头（recycle/lane-steal） |
+| HOLD | OPEN | thaw | deps 闸自动解冻（需卡面 verify；解冻后补位入队） |
+| DRAFT | CANCELED | cancel | PM 作废 |
+| OPEN | CANCELED | cancel | PM 作废 |
+| CLAIMED | CANCELED | cancel | PM 作废（活跃 claims 需 --force 清锁） |
+| HOLD | CANCELED | cancel | PM 作废 |
+| VERIFIED | CANCELED | cancel | PM 作废——系统保障转性专用（业主 seq=10：卡账只收业务，保障登记移 docs/系统保障清单.md，RESIDENT 岗卡一律作废）；业务 VERIFIED 卡不享此边，命令闸另拒 |
+| DRAFT | DRAFT | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| DRAFT | OPEN | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| DRAFT | HOLD | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| DRAFT | CANCELED | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| OPEN | DRAFT | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| OPEN | OPEN | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| OPEN | HOLD | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| OPEN | CANCELED | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| HOLD | DRAFT | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| HOLD | OPEN | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| HOLD | HOLD | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| HOLD | CANCELED | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| CANCELED | DRAFT | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| CANCELED | OPEN | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| CANCELED | HOLD | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+| CANCELED | CANCELED | set | PM 改字段通道顺带移态（→OPEN 需卡面已有 verify；CANCELED→OPEN=复活口子） |
+<!-- STATE-MATRIX-END -->
+
+### 每态必填字段（缺=异常；`cards_dag.py dag` 巡检按同一张表报缺）
+
+<!-- STATE-FIELDS-BEGIN -->
+| 状态 | 卡面必填 | 说明 |
+|---|---|---|
+| DRAFT | — | 允许无判据；发布成 OPEN 前必须补 verify |
+| OPEN | verify | OPEN 无判据=调度黑洞（create/set 闸已锁死） |
+| CLAIMED | owner, claimed_at | claimed_at=ISO8601 带冒号，`datetime.fromisoformat` 直接可解 |
+| HOLD | — | 允许暂缺 verify：thaw 闸单独拒「缺 verify 解冻」并 ALARM |
+| DONE | owner, commit, done_at | done_at 由 done 命令收口必写；存量欠账补账归 DONE-SWEEP |
+| VERIFIED | verdict | 机器复跑痕 verify_run 由 VFY1 起新卡必带 |
+| CANCELED | — | cancel 清 claimed_at，落终态 |
+<!-- STATE-FIELDS-END -->
+
+## 配置（一切定制走配置，默认值=引擎出厂行为）
+
+优先级：**环境变量 > `config.toml` 文件层 > 内置默认**。文件层发现顺序：
+`CC_CONFIG` 指向的文件 > 账本根（`CC_TEAM_HOME`）下的 `config.toml`。
+未识别的键只告警不报错（旧版引擎吃新版配置不炸）。
+
+内置默认全部**由仓位置/宿主环境派生**，不含任何机器名、用户名、盘符字面量——
+换机器/换用户/换操作系统目录布局，不改一行代码。
+
+常用键（`cc init` 生成的模板里有全量注释）：
+
+| 键 | 环境变量锚 | 含义 |
+|---|---|---|
+| `host.fleet_root` / `host.user_home` / `host.sessions_dir` / `host.win_root` | `CC_HOME` / `CC_USER` / `CC_PROJ` | 车队根、宿主用户主目录、终端 agent 会话转录目录、Windows 挂载根探测 |
+| `fleet.code_root` | `CC_CODE`、`DISPATCH_CODE_ROOT` | 泳道 worktree（`wf-<道>`）所在根 |
+| `engine.runner_cmd` | `CC_RUNNER` | 起一次终端 agent 会话的包装命令 |
+| `engine.powershell` | `DISPATCH_PS` | Windows 侧解释器（跨 WSL 场景） |
+| `dispatch.lane_cap` | `DISPATCH_CAP` | 同时在飞泳道上限（默认 6） |
+| `dispatch.heartbeat_path` | `DISPATCH_HB` | 派发器心跳文件 |
+| `dispatch.bind_wait_s` / `dispatch.dead_grace_s` | `DISPATCH_BIND_WAIT` / `DISPATCH_DEAD_GRACE_S` | 起班后找会话锚的有界等待 / 尸检宽限 |
+| `dispatch.redauto_every` | `DISPATCH_REDAUTO_EVERY` | 红检自动化每 N 圈跑一次（默认 10） |
+| `thresholds.beat_stale_min` | `CARD_STALE_MIN` | 心跳过期判死分钟（默认 15） |
+| `thresholds.silence_release_min` | `CARD_SILENCE_RELEASE_MIN` | 在制断流探针阈值分钟（默认 45） |
+| `engine.verify_timeout_s` | `CARD_VERIFY_TIMEOUT` | 验收命令超时（默认 600） |
+| `pool.done_sweep_hours` / `pool.done_sweep_fails` | 同名大写 | DONE 积压巡检窗/连败降级数 |
+| `rings.<环名>_sec` | `CTRLD_<环名>_SEC` | 控制进程各常驻环周期秒（详见模板） |
+| `tasks.ctrld` / `tasks.boot` / `tasks.fuse` | `CTRLD_TASK_NAME` / `BOOT_TASK_NAME` / `FUSE_TASK_NAME` | 操作系统计划任务名（Windows 侧） |
+| `platform.api_base` | `NIGHT_LEARN_BASE` | 外接平台 API 入口（夜环上报类）。真实部署地址是环境定制项——只写本机 `config.toml`，引擎包内不落真实地址、内置默认=本机形态 |
+
+## ops/ 常驻环一览（全部单进程时间轮，或由系统定时器触发一次后常驻）
+
+- `dispatch.py` —— 派单器：按名册找空闲泳道，取队首可领卡，起 worker 会话并绑锚。
+- `ctrld.py` —— 控制进程：一个进程内跑所有周期环（派发/回收/红检/看门/合流…），周期可配。
+- `recycle.py` —— 回收器：心跳断流、认领未起班、DONE 积压三类场景的自动 release/巡检。
+- `check_exit.py` —— agent 会话退出钩子：按会话身份安全结账（防串卡）。
+- `fuse.py` —— 交卷未合流看护：到点自动把泳道提交并进主干（干跑净才动）。
+- `inbox_watchdog.py` —— 信箱/事件看门：账本事件与外部消息通道的滞留告警。
+- `lane_registry.py` —— 泳道名册与垃圾会话目录清理（白名单三源并集，宁漏不误删）。
+- `board/` —— 只读看板适配（状态页、运行日志尾、告警面）。
+
+`tests/` 为每个环节配红绿锁：`all.sh` 汇总跑五套（账本/对抗/回收守卫/判活/CC 环境检测），
+`oss-release-check.py` 是发布包自身的常驻锁（敏感清零/白名单边界/默认等价三段）。
+
+## 发布边界
+
+发布包只含：`ccards/`、`ops/`、`tests/`、`deploy/`（Linux systemd / macOS launchd 常驻模板）、
+`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`pyproject.toml`、`LICENSE`、
+`CHANGELOG.md`、`CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`（脚本强制 LF——
+Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
+**运行现账一律不出包**：`state/`、`logs/`、`claims/`、`briefs/`、`inbox/`、`registry` 实账、
+`board/` 定制层、`docs/` 运营台账、`config.toml`。
+`ccards/oss_cli.py export --out <dir>`（或 `cc export`）按上述白名单复制，等价一次干净 clone；
+`tests/oss-release-check.py` 对该白名单+敏感面常驻把关，改一行发布集都可能让它红。
+
+## 一键命令（`cc`）
+
+`pyproject.toml` 声明控制台入口 `cc = ccards.oss_cli:main`（pip/pipx 安装后可用；
+无安装环境时 `python -I ccards/oss_cli.py` 等价）：
+
+- `cc init --dir <仓根>` —— 生成运行时目录骨架、`config.toml` 默认模板、计划任务/cron 模板、
+  `cards_dag.py` 直达启动器；检测 Claude Code（缺失只给官方安装指引；`--install-agent`
+  才明示后代执行安装）；跑完自检输出 `ALL_PASS`。
+- `cc selftest [--engine-home <dir>]` —— 跑引擎自带红绿锁套件。
+- `cc export --out <dir>` —— 按发布白名单导出干净发行包。
+
+## 许可
+
+MIT。见 `LICENSE`。

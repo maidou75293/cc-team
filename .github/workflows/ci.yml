@@ -1,0 +1,36 @@
+# 五套红绿锁 + 发布锁的双平台实跑（ubuntu + windows=本引擎实际宿主形态）。
+# 判据面本地是什么，CI 就是什么：不许在此加“特殊豁免”。
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  suites:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # 测试沙箱会真起 git 仓提交；runner 默认无身份→GIT_* 环境变量全局兜底（作者+提交者四件套）
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@ci.local
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@ci.local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"   # 渲染层 DOM 桩（#68/panel）要 node；board 锁在无 board 时自动 SKIP
+      - name: five mechanism suites
+        shell: bash
+        run: bash tests/all.sh        # 末行须见 ALL_SUITES_PASS（脚本非零即红）
+      - name: release lock (A/B/C)
+        shell: bash
+        # 独立发行仓形态下 C 自动 SKIP（见 oss-release-check.py 注释），A/B 照强制
+        run: python -I tests/oss-release-check.py

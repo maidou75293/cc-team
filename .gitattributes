@@ -1,0 +1,15 @@
+# 发行仓行尾定版：脚本类强制 LF——Windows core.autocrlf=true 的用户 clone 后
+# CRLF 会让 bash 直接语法崩（"$'\r'"），这条不是美化是可用性判据。
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.service text eol=lf
+*.plist text eol=lf
+*.example text eol=lf
+*.json text eol=lf
+*.log text eol=lf
+LICENSE text eol=lf

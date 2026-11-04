@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- REQ-CTRL-PLAIN-1 macOS 常驻模板（**预留**：REQ-REG-HOST-1 host/launcher 接口即为此铺，
+     实装按业主发话再做——排期定版「macOS 需要但要排队」）。装法：
+     cp com.cc.ctrld.plist ~/Library/LaunchAgents/ 并把 __HOME__ 替为真实家目录，
+     launchctl load ~/Library/LaunchAgents/com.cc.ctrld.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cc.ctrld</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__HOME__/cc-team/ops/ctrld.py</string>
+    <string>loop</string>
+    <string>--live</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__HOME__/cc-team</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONIOENCODING</key>
+    <string>utf-8</string>
+    <key>CC_TEAM_HOME</key>
+    <string>__HOME__/cc-team</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/cc-team/logs/ctrld.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/cc-team/logs/ctrld.log</string>
+</dict>
+</plist>

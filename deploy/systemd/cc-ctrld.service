@@ -1,0 +1,27 @@
+[Unit]
+# REQ-CTRL-PLAIN-1（2026-11-02 业主定版「控制面通用化去WSL依赖」）：单进程控制面 ctrld.py
+# 三环并一 loop（发单/体检/滞留扫），纯 python + 账本文件、纯时间片、零 cron 零 WSL。
+# 本文件 = Linux 部署模板（开源仓直接带；本机 WSL 旧形态 cc-dispatch.service+crontab 保留
+# 为兼容路径，**停用不删除**——切流 runbook 见 docs/机制-控制面通用化-20261102.md）。
+Description=CC single-process control plane (ctrld: dispatch+full+sweep three rings, one loop)
+After=network.target
+
+[Service]
+Type=simple
+# 部署位按实际改：cc-team 账本根所在目录（%h=用户家目录，不钉内部用户名）。
+WorkingDirectory=%h/cc-team
+Environment=PYTHONIOENCODING=utf-8
+# 台账家与正账分离时再开 CC_TEAM_HOME；三环拍秒可逐环覆写（缺省 60/60/60）：
+#Environment=CC_TEAM_HOME=%h/cc-team
+#Environment=CTRLD_DISPATCH_SEC=60
+#Environment=CTRLD_FULL_SEC=60
+#Environment=CTRLD_SWEEP_SEC=60
+# 动账须显式 --live（缺省=shadow 只报不动账，手滑裸跑不脏账）。
+ExecStart=/usr/bin/python3 %h/cc-team/ops/ctrld.py loop --live
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:%h/cc-team/logs/ctrld.log
+StandardError=append:%h/cc-team/logs/ctrld.log
+
+[Install]
+WantedBy=default.target
