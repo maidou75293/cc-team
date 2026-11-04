@@ -478,7 +478,7 @@ def _stage_commit(repo, fname, content):
 
 def run_demo(out=print):
     """全链沙箱演示（README「三分钟现场」的可感版）：临时 team + 临时 git 仓，
-    立卡 3 张后模拟工人：#1 交卷判据绿→验收绿；#2 判据红→不放行留待验；#3 验收后被抽查打回。
+    立卡 3 张后模拟工人：#1 交卷判据绿→验收绿；#2 判据红→不放行留待验；#3 验收后被抽查打回→返工重交转绿。
     演示永远走手填模板（不依赖也不计费外接 agent）；结束销毁沙箱，正账零接触。"""
     tmp = tempfile.mkdtemp(prefix="cc-wizard-demo-")
     team = os.path.join(tmp, "team")
@@ -562,8 +562,18 @@ def run_demo(out=print):
         ledger.run("verdict", ids[2], "REJECT", "--reason", "演示：验收后抽查发现口径偏差，打回返工",
                    out=out, cwd=repo)
         broadcast_once(team, st, None, out)
+        # 打回返工闭环（业主 2026-11-04 23:0x 直令「演示要有始有终」）：返工重交，验收章
+        # 仍由机器复跑判据落——不是谁口头说改好了就算数。
+        e3b = worker("slot-1", ids[2])
+        if e3b is None:
+            out("[演示异常] 返工重领失败——闭环缺环节")
+            return {"error": "rework-claim", "ids": ids}
+        c3b = _stage_commit(repo, "demo_w3_api.py",
+                            "def api():\n    return 'W3-PASS'  # 返工：口径修正已合入\n")
+        ship("slot-1", ids[2], e3b, c3b, "demo_w3_api.py")
+        out("%s [返工完成] %s 打回后返工重交——绿章=机器复跑判据通过，见上拍播报" % (STAGE5, ids[2]))
         statuses = {cid: ledger.cards().get(cid, {}).get("status") for cid in ids}
-        out("[演示收] 三张卡现状：%s（绿/红不放行/打回各一，全程闸都在）"
+        out("[演示收] 三张卡终局：%s（判据红不放行=留待验；打回返工=重交转绿；全程闸都在）"
             % "，".join("%s=%s" % (k, v) for k, v in sorted(statuses.items())))
         out("—— 沙箱演示结束（临时账销毁；主干分支=%s）——" % branch)
         return {"skipped": None, "ids": ids, "statuses": statuses, "transcript_team": team}

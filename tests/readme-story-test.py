@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 # readme-story-test.py — REQ-OSS-README-UX-1 常驻判据：README 对话化改版 + 头牌动画演示。
-# 业主 2026-11-04 直令四硬条的机器化（客户已有 Claude Code，给 git 地址就能开干）：
+# 业主 2026-11-04 直令四硬条的机器化（客户已有 Claude Code，给 git 地址就能开干）；
+# R2 按 22:1x 打回新规格增锁：主线零命令行（T8）、体积上限放宽到 8MB（T2）。
+# R3 按 23:0x 打回落定稿（业主原话「先不管看板，就是在对话框输出过程」「动态过程还是老的」）：
+#      画面=单一 CC 对话框全链实录，T2c/T3 从「四画面含看板」改为「五段过程拍齐 + board=0
+#      负锁」；看板出现在图注窗口=红（回退旧文案的差分靶）。
 #   T1 头引图：全文第一个被引用的图片必须是 demo.gif，且位于第一个二级标题之前（置顶）；
-#   T2 动画本体：demo.gif 存在、魔数 GIF89a、帧数≥10、体积<3MB（重录变大/退化即红）；
+#   T2 动画本体：demo.gif 存在、魔数 GIF89a、帧数≥10、体积<8MB（业主 11-04 22:1x 打回补画面后
+#      放宽上限；重录变大/退化仍即红）；
+#   T2c 画面构成（R3 定稿）：GIF 注释扩展块内 SCENES 清单必须点名 init/dialog/gate_red/rework/green
+#      五段过程拍且各≥1 帧、board=0（无看板画面），TOTAL 与逐块实数帧数一致——缺任何一拍
+#      （尤其「判据红不放行」「打回返工」两拍＝业主点名要看的「过程」）即红；
 #   T3 真实来源标注：图引用行 ±2 行窗口内含「沙箱/SANDBOX」与「加速/accelerated」两标，
-#      且正文提及 `cc demo`（动画=沙箱真跑转译，禁摆拍的凭据入口）；
+#      且同窗点名「对话框」（单窗叙事）与「返工」（过程主角落文案），图注窗口出现「看板」=红
+#      （业主 23:0x「先不管看板」），正文另提及 `cc demo`（复跑对照入口，禁摆拍凭据）；
+#   T8 主线零命令行：附录之前的正文不得出现 shell 围栏（bash/sh/console…=可复制执行的命令），
+#      且必须出现「粘 + git 地址 + 一句话 + 自举」句式与「不记命令」口径——业主 11-04 22:1x
+#      打回的第一条：客户已有 CC，粘地址即可自举，命令行只许留在附录；
 #   T4 前置三条：模型随 Claude Code 自带 / 引擎零外部依赖不上云 / 探测缺位只打印官方安装命令；
 #   T5 语气闸门：剥除图片与链接语法后，正文第一个含中文段落不得出现感叹号（专业，不叫卖）；
 #   T6 机器表不漂移：README 四张 STATE-* 标记表与 ccards/statemachine.py 逐行同源
@@ -75,6 +87,45 @@ def gif_frame_count(data):
     return frames
 
 
+def gif_comments(data):
+    """同样纯 stdlib 走块链，收集注释扩展块(0x21 0xFE)文本——渲染端把画面构成写在这里，
+    判端才可能机器化「动画里有哪几段画面」，否则只能数帧看个热闹。"""
+    n = len(data)
+    i = 13
+    packed = data[10]
+    if packed & 0x80:
+        i += 3 * (2 << (packed & 0x07))
+    out = []
+    while i < n:
+        b = data[i]
+        if b == 0x3B:
+            break
+        if b == 0x21:
+            label = data[i + 1] if i + 1 < n else 0
+            i += 2
+            payload = b""
+            while i < n and data[i] != 0:
+                payload += data[i + 1:i + 1 + data[i]]
+                i += data[i] + 1
+            i += 1
+            if label == 0xFE:
+                out.append(payload.decode("utf-8", "replace"))
+        elif b == 0x2C:
+            if i + 10 > n:
+                break
+            lp = data[i + 9]
+            i += 10
+            if lp & 0x80:
+                i += 3 * (2 << (lp & 0x07))
+            i += 1
+            while i < n and data[i] != 0:
+                i += data[i] + 1
+            i += 1
+        else:
+            i += 1
+    return out
+
+
 def readme_text():
     return io.open(README, encoding="utf-8").read()
 
@@ -112,10 +163,43 @@ def t2():
     else:
         bad("T2 帧数", "解析得 %s，要求≥10" % fc)
     size = len(data)
-    if size < 3 * 1024 * 1024:
-        ok("T2 体积 %.1fKB（<3MB）" % (size / 1024.0))
+    if size < 8 * 1024 * 1024:
+        ok("T2 体积 %.1fKB（<8MB，业主 11-04 22:1x 补画面后放宽）" % (size / 1024.0))
     else:
-        bad("T2 体积", "%d 字节 ≥3MB，头牌动画必须瘦身" % size)
+        bad("T2 体积", "%d 字节 ≥8MB，头牌动画必须瘦身" % size)
+
+
+# ─────────────── T2c 画面构成（GIF 注释块 SCENES 清单=三画面补上的机器凭据） ───────────────
+def t2c():
+    if not os.path.isfile(GIF):
+        return bad("T2c 画面构成", "demo.gif 缺失")
+    data = open(GIF, "rb").read()
+    cm = [c for c in gif_comments(data) if c.startswith("SCENES")]
+    if not cm:
+        return bad("T2c 画面构成", "GIF 注释扩展块无 SCENES 清单（渲染端未落画面凭据）")
+    man = cm[0]
+    need = ("init", "dialog", "gate_red", "rework", "green")
+    counts, miss = {}, []
+    for k in need:
+        m = re.search(r"\b%s=(\d+)" % k, man)
+        if not m or int(m.group(1)) < 1:
+            miss.append(k)
+        else:
+            counts[k] = int(m.group(1))
+    if miss:
+        bad("T2c 画面构成", "缺过程拍 %s｜清单=%s（要求 装机自检/对话/判据红不放行/打回返工/验收绿 各≥1 帧）"
+            % (",".join(miss), man))
+    else:
+        ok("T2c 五段过程拍齐备 %s" % man)
+    mb = re.search(r"\bboard=(\d+)", man)
+    ok("T2c 单对话框无看板（board=0 在册）") if (mb and mb.group(1) == "0") \
+        else bad("T2c 画面构成", "board 清单缺位或≠0（业主 23:0x 定稿=对话框外画面不许进）｜%s" % man)
+    m = re.search(r"\bTOTAL=(\d+)", man)
+    real = gif_frame_count(data)
+    if m and int(m.group(1)) == real:
+        ok("T2c 清单帧数与实帧一致（TOTAL=%d）" % real)
+    else:
+        bad("T2c 帧数漂移", "清单=%s 实帧=%s" % (m.group(1) if m else "无", real))
 
 
 # ─────────────────────────── T3 sandbox/加速标注 + cc demo 指认 ───────────────────────────
@@ -133,6 +217,12 @@ def t3():
         ok("T3 图注窗口同现 sandbox 与 accelerated 两标")
     else:
         bad("T3 标注", "沙箱=%s 加速=%s｜win=%s" % (has_sbx, has_acc, win[:120]))
+    if "看板" in win:
+        bad("T3 画面点名", "图注窗口出现「看板」=旧四画面文案回退（业主 23:0x「先不管看板」）｜win=%s" % win[:160])
+    elif "对话框" in win and "返工" in win:
+        ok("T3 图注点名「单一对话框 + 返工」过程叙事（R3 定稿文案侧凭据）")
+    else:
+        bad("T3 画面点名", "图注窗口未点名 对话框/返工｜win=%s" % win[:160])
     if "cc demo" in txt:
         ok("T3 正文指认动画来源=cc demo 沙箱实录")
     else:
@@ -238,8 +328,41 @@ def t7():
             bad("T7 导出面", "%s 在仓但不在 RELEASE_FILES/DIRS——export 必漏=公仓死图" % u)
 
 
+# ─────────────── T8 主线零命令行（业主 11-04 22:1x 打回第一条） ───────────────
+_SHELL_FENCE = re.compile(r"^[ \t]*`{3,}[ \t]*(bash|sh|shell|console|zsh|ps1|powershell|bat|cmd)\b",
+                          re.I | re.M)
+
+
+def t8():
+    txt = readme_text()
+    m = re.search(r"^#{1,6}[ \t]*附录", txt, re.M)
+    if not m:
+        return bad("T8 附录边界", "找不到「附录」小节——手工命令没有收口处")
+    main, tail = txt[:m.start()], txt[m.start():]
+    in_main = _SHELL_FENCE.findall(main)
+    in_tail = _SHELL_FENCE.findall(tail)
+    if in_main:
+        bad("T8 主线含可执行命令块", "附录之前有 %d 处 shell 围栏（首个=%r）——客户不该背命令"
+            % (len(in_main), _SHELL_FENCE.search(main).group(0).strip()))
+    else:
+        ok("T8 主线（附录前）零 shell 围栏")
+    if in_tail:
+        ok("T8 手工命令仍在附录内（%d 处围栏）" % len(in_tail))
+    else:
+        bad("T8 附录缺命令面", "附录内也没有 shell 围栏——调试/无 daemon 的等价物不能丢")
+    for name, pat in (
+            ("T8e 粘 git 地址的句式在场", r"粘[^\n]{0,40}(地址|URL)"),
+            ("T8f 一句话开干的口径在场", r"一句话"),
+            ("T8g 自举的口径在场", r"自举"),
+            ("T8h 不记命令的口径在场", r"(不记命令|零命令行|没有命令行|不碰命令行)")):
+        if re.search(pat, main):
+            ok(name)
+        else:
+            bad(name, "主线未见 /%s/" % pat)
+
+
 if __name__ == "__main__":
-    for fn in (t1, t2, t3, t4, t5, t6, t7):
+    for fn in (t1, t2, t2c, t3, t4, t5, t6, t7, t8):
         try:
             fn()
         except Exception as e:                               # 判据自身异常=红，不许静默

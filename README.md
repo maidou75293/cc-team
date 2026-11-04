@@ -1,8 +1,8 @@
-# cc-team —— 给一个 git 地址，就能开干
+# cc-team —— 给 git 地址 + 一句话，CC 自举；之后全对话
 
-![cc-team 沙箱彩排实录（SANDBOX · 加速回放）](demo.gif)
+![单一 Claude Code 对话框的全链对话实录（SANDBOX · 按真实时戳加速回放）：给 git 地址 → 装机自检 → 说人话需求 → 立卡开工 → 交卷 → 判据红不放行 → 打回返工 → 机器盖章合入](demo.gif)
 
-*上图是 `cc demo` 在一次性沙箱里实跑一遍全链（立卡 → 双泳道并行 → 合入主干 → 机器复跑判据 → 沙箱自毁）的录屏转译：画面每一行都是真实 stdout，非摆拍，临时随机路径已隐去。*
+*画面里只有一个对话框，你全程只做三件事：把 git 地址粘给 Claude Code、用人话把需求说清、回一句「确认」。其余每一行都是引擎真实执行输出——`git clone` 与 `cc init` 自检落地 `ALL_PASS`、`cc` 首次进入自动在一次性临时沙箱把全链跑给你看：立卡、起工位、领任务交卷、判据红的卡如实停在待验不放行、验收后被抽查打回、返工重交由机器复跑判据才落绿章，终局逐卡对账。真跑实录非摆拍：逐帧按真实时戳拼帧加速回放，临时随机路径已隐去，同一链路你本地复跑可对照（`cc init` + `cc` 首进即见，或 `cc demo` 跑双泳道并行全链后自毁）。*
 
 [![ci](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml/badge.svg)](https://github.com/maidou75293/cc-team/actions/workflows/ci.yml)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -17,51 +17,56 @@
 - **引擎零外部依赖、不上云**：纯 Python 标准库；账本、代码、验收痕全程留在你自己的机器和 git 仓库里，断网可跑。
 - **探测缺位不代装**：`cc init` 检测到没装 Claude Code 时**只打印官方安装命令**，绝不静默下载（`--install-agent` 才在明示完整命令后代执行）。
 
-## 三步开干：clone → init → 说人话
+## 开干：不装环境、不记命令
 
-**① 安装（全程唯一碰命令行的地方，一次性）**
+**① 把 git 地址粘给 Claude Code，带一句话**
 
-```bash
-git clone <cc-team 的 git 地址> && cd cc-team
-pipx install .          # 装好得到入口命令 cc（等价写法 python -I ccards/oss_cli.py）
+在你已经装好、已经登录的 Claude Code 里，把这个仓库的地址贴给它，一句话说明来意：
 
-cc init --dir /path/to/你的代码仓
-#   ↑ 生成运行时目录与配置，并安装常驻引擎（开机自启的启动器，不用守终端；
-#     派发/回收/合流各环都在里面，看板 http://127.0.0.1:8790），自检末行 ALL_PASS。
-```
+> 把这个仓库装上，让你能带团队干活：`<cc-team 的 git 地址>`
 
-**② 在你的代码仓目录敲 `cc`，直接说需求**
+剩下的全是 CC 的活：取地址、跑 `cc init` 生成运行时目录与配置、按 init 落盘的常驻模板
+（Windows 计划任务 / macOS launchd / Linux systemd 三选一，一个常驻任务就够）把引擎接成
+开机自启，并把自检报到 `ALL_PASS`。派发/回收/合流各环都跑在这个常驻进程内（进程内时间轮，
+不给每个环建 OS 定时器）。
+探测到缺什么，引擎**只打印官方安装命令**让你决定，绝不静默代装。主线自始至终要你做的只有
+一件事：粘一次地址、说一句话。
 
-```
-你：我要建一个企业内部智能体：文档传上来能问答，按员工权限控制可见范围，回答要带出处
-cc：[步骤4/6] 方案书清单（3 个模块：接入与检索 / 权限 / 回答质量），每模块列功能、
-    怎么测（=验收判据）、后面怎么用……回复「确认」就立卡开工，回复「改X」继续调
-你：确认
-```
+**② 对 `cc` 说人话需求**
 
-裸 `cc` 即六步向导（内置在发行版里）：探测环境 → 问清需求 → 出方案书 → 你确认 → 批量立卡、起工位、实时播报。从这一步起没有命令、只有对话；手工立卡那套命令在主线上用不到，收在文末附录。
+裸 `cc` 即六步向导（内置在发行版里）：探测环境 → 问清需求 → 出方案书 → 你确认 →
+批量立卡、起工位、实时播报。对话形如：
 
-**③ 之后只看进度和结果**
+- 你：我要建一个企业内部智能体：文档传上来能问答，按员工权限控制可见范围，回答要带出处
+- cc：[步骤4/6] 方案书清单（3 个模块：接入与检索 / 权限 / 回答质量），每模块列功能、
+  怎么测（=验收判据）、后面怎么用……回复「确认」就立卡开工，回复「改X」继续调
+- 你：确认
 
-派单器接手：立卡入账 → 认领 → 起会话（worker 也是 CC 会话，多道可同时飞）→ 各道在 worktree 泳道写码提交 → 会话退出钩子自动跑你的验收命令 → 绿 = VERIFIED → 合流看护快进并进主干。每个关键环节实时播报回对话：
+需求可以是任何一句人话。你不需要知道「立卡」「认领」「合流」这些词怎么拼成命令——
+那是引擎和 worker 之间的事，全部走账本与闸门。
 
-```
-[步骤5/6] [立卡] SEARCH-TOPK 已入账待领
-[步骤5/6] [工位] 在编 2 个：slot-1, slot-2
-[步骤5/6] [开工] 工位 slot-1 领了 SEARCH-TOPK
-[步骤5/6] [交卷] SEARCH-TOPK 已提交，待机器复跑判据（工位 slot-1）
-[步骤5/6] [验收绿·合入主干] SEARCH-TOPK 判据复跑通过
-```
+**③ 之后只看播报**
 
-你的 `git log` 里随之多出一个带机器验收痕的 commit——它就是你自己部署流水线的放行信号。部署动作留在你的管线，引擎不碰你的生产环境。
+派单器接手：立卡入账 → 认领 → 起会话（worker 也是 CC 会话，多道可同时飞）→ 各道在
+worktree 泳道写码提交 → 会话退出钩子自动跑你的验收命令 → 绿 = 已验收（VERIFIED）→
+合流看护快进并进主干。每个关键环节实时播报回对话：
+
+- [步骤5/6] [立卡] SEARCH-TOPK 已入账待领
+- [步骤5/6] [工位] 在编 2 个：slot-1, slot-2
+- [步骤5/6] [开工] 工位 slot-1 领了 SEARCH-TOPK
+- [步骤5/6] [交卷] SEARCH-TOPK 已提交，待机器复跑判据（工位 slot-1）
+- [步骤5/6] [验收绿·合入主干] SEARCH-TOPK 判据复跑通过
+
+你的 `git log` 里随之多出一个带机器验收痕的 commit——它就是你自己部署流水线的放行
+信号。部署动作留在你的管线，引擎不碰你的生产环境。安装/自测/导出/无守护直驱那套手工
+命令全在文末附录，主线上用不到。
 
 ## 不放心？先在沙箱彩排一遍
 
-`cc demo` 在一次性临时沙箱里真跑「立卡 → 双泳道并行 → 合入主干 → 机器复跑判据 → 自毁」，零真实账触碰；末行 `DEMO_PASS` = 全链通，任一环节断 = `DEMO_FAIL: <环节名>`。上面那张 GIF 就是这条命令的实录转译，你可以本地复跑对照。
-
-```bash
-cc demo        # 或 python -I ccards/oss_cli.py demo
-```
+`cc demo` 在一次性临时沙箱里真跑「立卡 → 双泳道并行 → 合入主干 → 机器复跑判据 → 自毁」，
+零真实账触碰；末行 `DEMO_PASS` = 全链通，任一环节断 = `DEMO_FAIL: <环节名>`。上面头牌动画
+的第四段画面就是这条命令的实录转译，你可以复跑对照。首次进 `cc` 向导也会自动先在临时沙箱
+把全链演一遍（含「判据红就不放行」「验收后可打回」两种真实结局），你点头才碰你的仓库。
 
 ## 和现成方案的差异（2026-11 对公开项目实测调研）
 
@@ -103,7 +108,7 @@ cc demo        # 或 python -I ccards/oss_cli.py demo
 cc-team/
 ├── cards_dag.py          # 账本 CLI（唯一写入口，带写锁）
 ├── ccards/               # 引擎包：config(单配置入口) / cli(账本命令) / 支撑模块
-├── ops/                  # 常驻环：派发器、控制进程、回收器、看门、钩子、看板适配等
+├── ops/                  # 常驻环：派发器、控制进程、回收器、看门、钩子等
 ├── tests/                # 红绿锁套件（全部沙箱自包含）
 ├── state/ logs/ claims/  # 现账（运行时生成；★不在发布包内，见下）
 └── config.toml           # 可选：文件层配置（★不在发布包内，由 cc init 生成）
@@ -130,7 +135,7 @@ cc-team/
 | CANCELED | 已作废 | — | 无（例外通道 PM set → OPEN 复活，需 verify） | 终态，不再照看 |
 <!-- STATE-OWNER-END -->
 
-### 术语表（每态一个中文术语；看板/卡面/文档文案统一，禁自造词）
+### 术语表（每态一个中文术语；卡面/播报/文档文案统一，禁自造词）
 
 <!-- STATE-TERMS-BEGIN -->
 | 状态 | 中文术语（定版） | 别名（禁自造，见即改） |
@@ -238,7 +243,6 @@ cc-team/
 - `fuse.py` —— 交卷未合流看护：到点自动把泳道提交并进主干（干跑净才动）。
 - `inbox_watchdog.py` —— 信箱/事件看门：账本事件与外部消息通道的滞留告警。
 - `lane_registry.py` —— 泳道名册与垃圾会话目录清理（白名单三源并集，宁漏不误删）。
-- `board/` —— 只读看板适配（状态页、运行日志尾、告警面）。
 
 `tests/` 为每个环节配红绿锁：`all.sh` 汇总跑五套（账本/对抗/回收守卫/判活/CC 环境检测），
 `oss-release-check.py` 是发布包自身的常驻锁（敏感清零/白名单边界/默认等价三段）。
@@ -246,7 +250,8 @@ cc-team/
 ## 发布边界
 
 发布包只含：`ccards/`、`ops/`、`tests/`、`deploy/`（Linux systemd / macOS launchd 常驻模板）、
-`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`pyproject.toml`、`LICENSE`、
+`.github/`（CI workflow）、`cards_dag.py`、`README.md`、`demo.gif`（头牌动画资产，
+与 README 引用逐条对账=判据 `readme-story-test.py` T7）、`pyproject.toml`、`LICENSE`、
 `CHANGELOG.md`、`CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`（脚本强制 LF——
 Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
 **运行现账一律不出包**：`state/`、`logs/`、`claims/`、`briefs/`、`inbox/`、`registry` 实账、
@@ -254,18 +259,19 @@ Windows autocrlf 用户 clone 后 bash 不崩的可用性判据）。
 `ccards/oss_cli.py export --out <dir>`（或 `cc export`）按上述白名单复制，等价一次干净 clone；
 `tests/oss-release-check.py` 对该白名单+敏感面常驻把关，改一行发布集都可能让它红。
 
-## 一键命令（`cc`）
+## 附录：手工命令（主线用不到；观察/调试/无 daemon 直驱时才碰）
 
-`pyproject.toml` 声明控制台入口 `cc = ccards.oss_cli:main`（pip/pipx 安装后可用；
-无安装环境时 `python -I ccards/oss_cli.py` 等价）：
+上面「开干」三步全程没有命令行——自举由 CC 自己完成。这里是同一批动作的手工等价物，
+只给需要观察、调试或不装守护的人；`pyproject.toml` 声明控制台入口
+`cc = ccards.oss_cli:main`（pip/pipx 安装后可用；无安装环境时
+`python -I ccards/oss_cli.py` 等价）：
 
 - `cc init --dir <仓根>` —— 生成运行时目录骨架、`config.toml` 默认模板、计划任务/cron 模板、
   `cards_dag.py` 直达启动器；检测 Claude Code（缺失只给官方安装指引；`--install-agent`
   才明示后代执行安装）；跑完自检输出 `ALL_PASS`。
+- `cc demo` —— 一次性沙箱全链彩排（零真实账触碰）。
 - `cc selftest [--engine-home <dir>]` —— 跑引擎自带红绿锁套件。
 - `cc export --out <dir>` —— 按发布白名单导出干净发行包。
-
-## 附录：手工底层命令（正常流程用不到，观察/调试/无 daemon 直驱时才碰）
 
 ```bash
 # 引擎自带的红绿锁（全部断言自包含，只写临时沙箱，不碰真实账）
@@ -273,7 +279,7 @@ python -I tests/oss-release-check.py   # 发布自检：敏感清零/白名单�
 bash tests/all.sh                      # 五套机制回归：账本/对抗/回收/判活/CC 环境检测
 
 # 常驻引擎手工起停（正常由 cc init 装好启动器，开机自启，不需要守终端）
-python ops/ctrld.py loop --live --with-board   # 派发/回收/合流等环常驻一个进程，看板 :8790
+python ops/ctrld.py loop --live                # 派发/回收/合流等环常驻一个进程
 
 # 不开 ctrld 的手工全链路（一张卡从立到验收走一遍，理解状态机用）
 python -I cards_dag.py create REQ-DEMO-1 --title 示例卡 --verify "true" --files "src/"

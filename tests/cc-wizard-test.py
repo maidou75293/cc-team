@@ -223,9 +223,12 @@ has(trE, "[判据红]", "E11 演示链：判据红=不放行（卡留待验）")
 has(trE, "[打回红]", "E12 演示链：验收后打回红")
 has(trE, "[开工] 工位 slot-1 领了", "E13 演示链：哪道领了哪张卡")
 has(trE, "[交卷]", "E14 演示链：交卷播报")
+has(trE, "[返工完成]", "E15b 演示闭环：打回后返工重交有播报（业主 23:0x「有始有终」新规格）")
 m_red = re.search(r"\[演示收\].*?REQ-WIZ-01=(\w+).*?REQ-WIZ-02=(\w+).*?REQ-WIZ-03=(\w+)", "\n".join(trE))
-check(bool(m_red) and m_red.groups() == ("VERIFIED", "DONE", "OPEN"),
-      "E15 演示三态终局对账：绿=VERIFIED / 红不放行=DONE / 打回=OPEN",
+# 终局=VERIFIED/DONE/VERIFIED：01 交卷即绿、02 判据红不放行留待验（演示照留）、03 打回→返工→重交转绿。
+# 打回环节仍由 E12 [打回红] 锁痕（历史行不丢）；此处对账的是「有始有终」后的末态。
+check(bool(m_red) and m_red.groups() == ("VERIFIED", "DONE", "VERIFIED"),
+      "E15 演示终局对账：绿=VERIFIED / 红不放行=DONE / 打回返工=重交转绿 VERIFIED",
       "收到=%s" % (m_red.groups() if m_red else None,))
 
 
