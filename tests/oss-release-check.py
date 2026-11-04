@@ -27,6 +27,16 @@ import subprocess
 import sys
 import tempfile
 
+# 公仓 CI 第四圈实锤（11-04 windows runner）：本步以 `python -I` 起跑，-I=-E 不读
+# PYTHONIOENCODING，首行 print「A 敏感实扫」中文即 charmap 崩（ubuntu 同期全绿=非隔离步
+# 吃 env 生效反证）。出口钉 utf-8=ctrld/dispatch 同款（MECH-GBKDECODE-BOMB-1 推广面）。
+# 其 -I 子程（oss_cli selftest/export）各件出口自钉，见 ccards/oss_cli.py 同注。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CT = os.path.dirname(HERE)                      # cc-team 根
 # 主仓布局（REPO=cc-team 上级）与独立发行仓（REPO=cc-team 即 git 根）两形自适应；

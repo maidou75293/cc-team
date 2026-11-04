@@ -73,6 +73,15 @@ NO_WIN = 0x08000000 if os.name == "nt" else 0  # 黑窗口根除(业主2026-11-0
 HERE = os.path.dirname(os.path.abspath(__file__))          # cc-team/ops（本树）
 ROOT = os.path.dirname(HERE)                                # cc-team 根（本树）
 sys.path.insert(0, ROOT)
+# 公仓 CI 首绿实锤（11-04 windows runner）：runner 默认 ANSI=cp1252，而 -I 隔离模式=-E，
+# PYTHONIOENCODING 环境变量在子程**根本不被读**⇒ --selftest 中文案名 print 即 charmap 崩
+# （第三圈 93.2 全线 fails=0 假红、93.5「锚改动伤及」均此病）。出口钉 utf-8=recycle/
+# check_exit/guard_watch 同款（MECH-GBKDECODE-BOMB-1 推广面），与宿主码页无关。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 from ccards import config as _cfg  # REQ-OSS-ENGINE-1：配置单入口（环周期/任务名/宿主派生锚，env>toml>默认）
 
 

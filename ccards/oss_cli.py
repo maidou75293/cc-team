@@ -26,6 +26,15 @@ import subprocess
 import sys
 import tempfile
 
+# 公仓 CI 第四圈同因预防：oss-release-check 以 `python -I ccards/oss_cli.py selftest/export`
+# 起子程（B 步在干净克隆内跑），-I 不读 PYTHONIOENCODING，中文宣 print 即 charmap 崩。
+# 出口钉 utf-8=ctrld/dispatch/oss-release-check 同款（MECH-GBKDECODE-BOMB-1 推广面）。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # bin=起会话核 run-cc.ps1（BUG-RUNNER-GONE-1 后为引擎命脉；缺它干净克隆车队起不来，
 # 且 dispatch selftest T11 的「正本在仓」断言必红——2026-11-04 CI 首绿前补账）
 RELEASE_DIRS = ("ccards", "ops", "tests", "deploy", ".github", "bin")
